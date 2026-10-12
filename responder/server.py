@@ -11,7 +11,6 @@ import struct
 import threading
 import time
 
-import dns.edns
 import dns.exception
 import dns.flags
 import dns.message
@@ -48,6 +47,7 @@ class Responder:
             # make_response adds OPT but does not echo DO.
             response.use_edns(0, dns.flags.DO if do else 0, OUR_UDP_PAYLOAD)
             if query.edns > 0:
+                response.flags &= ~dns.flags.AA
                 response.set_rcode(dns.rcode.BADVERS)
                 return response
 

@@ -99,6 +99,7 @@ class Step1(unittest.TestCase):
     def test_badvers(self):
         r = self.ask("www.nsec.test.", "A", use_edns=1)
         self.assertEqual(r.rcode(), dns.rcode.BADVERS)
+        self.assertFalse(r.flags & dns.flags.AA)
 
 
 if __name__ == "__main__":
