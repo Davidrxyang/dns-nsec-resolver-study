@@ -1,0 +1,9 @@
+; Step 1 zone: positive answers only. DNSKEY and RRSIGs are added at load time.
+; Short SOA minimum (60) so plain negative caching will not mask ANC in later steps.
+$ORIGIN nsec.test.
+$TTL 300
+@       SOA   ns1 hostmaster 1 3600 600 86400 60
+@       NS    ns1
+ns1     A     127.0.0.1
+www     A     192.0.2.1
+www     TXT   "hello from nsec.test"

@@ -1,0 +1,6 @@
+venv/
+__pycache__/
+logs/
+# Test-only signing keys and the anchors derived from them
+zones/keys/
+zones/*.anchor
