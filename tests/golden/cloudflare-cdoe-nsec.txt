@@ -1,0 +1,24 @@
+
+; <<>> DiG 9.20.24-1ubuntu0.3-Ubuntu <<>> +dnssec +norec @ns4.cloudflare.com nosuchname-12345.cloudflare.com A
+; (4 servers found)
+;; global options: +cmd
+;; Got answer:
+;; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 21455
+;; flags: qr aa; QUERY: 1, ANSWER: 0, AUTHORITY: 4, ADDITIONAL: 1
+
+;; OPT PSEUDOSECTION:
+; EDNS: version: 0, flags: do; udp: 1232
+;; QUESTION SECTION:
+;nosuchname-12345.cloudflare.com. IN	A
+
+;; AUTHORITY SECTION:
+cloudflare.com.		300	IN	SOA	ns3.cloudflare.com. dns.cloudflare.com. 2417282175 10000 2400 604800 300
+nosuchname-12345.cloudflare.com. 300 IN	NSEC	\000.nosuchname-12345.cloudflare.com. RRSIG NSEC TYPE128
+cloudflare.com.		300	IN	RRSIG	SOA 13 2 300 20261013222655 20261011202655 34505 cloudflare.com. QCdLXEocGnXfDRy7sDeEPfrjpuvPhYD7l7+3MJKI1y8FXphHh+5MjTfw sqbtAff2InZ23BiFCX3mkfOYRx4TYg==
+nosuchname-12345.cloudflare.com. 300 IN	RRSIG	NSEC 13 3 300 20261013222655 20261011202655 34505 cloudflare.com. GP6CkkwxnfjQV7ZtsdFwL8OrIuofOLZC0xR0mn+nQWbIfVIuEqipamJZ SDQsupLcJwvwIjYVX/NfYPTqNj32Iw==
+
+;; Query time: 6 msec
+;; SERVER: 162.159.1.33#53(ns4.cloudflare.com) (UDP)
+;; WHEN: Mon Oct 12 17:26:55 EDT 2026
+;; MSG SIZE  rcvd: 390
+

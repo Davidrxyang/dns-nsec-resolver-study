@@ -1,0 +1,2 @@
+# Per-zone config. denial selects the denial-of-existence variant.
+denial = "nsec"

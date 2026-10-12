@@ -1,9 +1,24 @@
-; Step 1 zone: positive answers only. DNSKEY and RRSIGs are added at load time.
-; Short SOA minimum (60) so plain negative caching will not mask ANC in later steps.
+; Vanilla NSEC zone. DNSKEY, NSEC, and RRSIGs are added at load time.
+; Short SOA minimum (60) so plain negative caching will not mask ANC later.
 $ORIGIN nsec.test.
 $TTL 300
-@       SOA   ns1 hostmaster 1 3600 600 86400 60
-@       NS    ns1
-ns1     A     127.0.0.1
-www     A     192.0.2.1
-www     TXT   "hello from nsec.test"
+@           SOA   ns1 hostmaster 2 3600 600 86400 60
+@           NS    ns1
+ns1         A     127.0.0.1
+www         A     192.0.2.1
+www         TXT   "hello from nsec.test"
+
+; Empty non-terminal: "ent" has no data, only a name below it.
+host.ent    A     192.0.2.2
+
+; Wildcard. Its parent "wild" is also an empty non-terminal.
+*.wild      A     192.0.2.3
+
+; Signed delegation (DS present) with in-bailiwick glue.
+secure      NS    ns.secure
+secure      DS    12345 13 2 8f4e6c1d2b3a59687f0e1d2c3b4a59687f0e1d2c3b4a59687f0e1d2c3b4a5968
+ns.secure   A     192.0.2.53
+
+; Insecure delegation (no DS).
+insecure    NS    ns.insecure
+ns.insecure A     192.0.2.54

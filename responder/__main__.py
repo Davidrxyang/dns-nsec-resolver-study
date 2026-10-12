@@ -2,8 +2,10 @@
 
 import argparse
 import threading
+import tomllib
 from pathlib import Path
 
+from .denial import VARIANTS
 from .server import Responder, start
 from .zone import SignedZone
 
@@ -21,10 +23,13 @@ def main():
 
     zones = []
     for zf in sorted(args.zone_dir.glob("*.zone")):
-        z = SignedZone(zf, args.zone_dir / "keys")
+        conf_file = zf.with_suffix(".toml")
+        conf = tomllib.loads(conf_file.read_text()) if conf_file.exists() else {}
+        denial = VARIANTS[conf.get("denial", "nsec")]()
+        z = SignedZone(zf, args.zone_dir / "keys", denial)
         anchor = args.zone_dir / f"{z.origin.to_text(omit_final_dot=True)}.anchor"
         anchor.write_text(z.anchor_text())
-        print(f"loaded {z.origin} key_tag={z.key_tag} anchor={anchor}")
+        print(f"loaded {z.origin} denial={conf.get('denial', 'nsec')} key_tag={z.key_tag} anchor={anchor}")
         print(f"  {z.ds_text()}")
         zones.append(z)
 

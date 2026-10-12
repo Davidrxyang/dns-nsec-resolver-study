@@ -82,10 +82,10 @@ class Step1(unittest.TestCase):
         r = self.ask("www.nsec.test.", "A", use_edns=False)
         self.assertEqual(r.edns, -1)
 
-    def test_refused(self):
-        for name in ("nope.nsec.test.", "example.com."):
-            r = self.ask(name, "A", want_dnssec=True)
-            self.assertEqual(r.rcode(), dns.rcode.REFUSED)
+    def test_refused_out_of_zone(self):
+        r = self.ask("example.com.", "A", want_dnssec=True)
+        self.assertEqual(r.rcode(), dns.rcode.REFUSED)
+        self.assertFalse(r.flags & dns.flags.AA)
 
     def test_udp_truncation_and_tcp_fallback(self):
         r = self.ask("big.nsec.test.", "TXT", want_dnssec=True, payload=512)

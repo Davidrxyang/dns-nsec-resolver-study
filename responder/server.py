@@ -1,7 +1,7 @@
 """Query handling and UDP/TCP framing.
 
-Step 1 behavior: positive answers only. Anything that would need a denial
-(missing name or type) gets REFUSED until step 2.
+The lookup itself lives in answer.py; this module handles the header, EDNS,
+error RCODEs, size limits, transport, and logging.
 """
 
 import hashlib
@@ -19,6 +19,7 @@ import dns.rcode
 import dns.rdataclass
 import dns.rdatatype
 
+from .answer import answer
 from .zone import SignedZone
 
 OUR_UDP_PAYLOAD = 1232  # advertised in our OPT record; avoids fragmentation
@@ -67,16 +68,17 @@ class Responder:
             response.set_rcode(dns.rcode.REFUSED)
             return response
 
-        found = zone.get(q.name, q.rdtype)
-        if found is None:
-            # Denial of existence is step 2.
+        if q.rdtype in (dns.rdatatype.AXFR, dns.rdatatype.IXFR):
             response.flags &= ~dns.flags.AA
             response.set_rcode(dns.rcode.REFUSED)
             return response
-        rrset, sigs = found
-        response.answer.append(rrset)
-        if do:
-            response.answer.append(sigs)
+        if q.rdtype == dns.rdatatype.ANY:
+            # Not needed for the study; RFC 8482 minimal ANY could go here.
+            response.flags &= ~dns.flags.AA
+            response.set_rcode(dns.rcode.NOTIMP)
+            return response
+
+        answer(response, zone, q.name, q.rdtype, do)
         return response
 
     def handle(self, wire: bytes, transport: str, src) -> bytes | None:
@@ -87,7 +89,15 @@ class Responder:
                       "error": f"parse: {type(e).__name__}"})
             return None
 
-        response = self.build_response(query)
+        try:
+            response = self.build_response(query)
+        except Exception as e:
+            # A bug must not turn into silence (looks like packet loss to a
+            # resolver); answer SERVFAIL and record what happened.
+            self.log({"src": src[0], "sport": src[1], "transport": transport,
+                      "error": f"internal: {type(e).__name__}: {e}"})
+            response = dns.message.make_response(query)
+            response.set_rcode(dns.rcode.SERVFAIL)
 
         if transport == "udp":
             limit = max(MIN_UDP_PAYLOAD, query.payload) if query.edns >= 0 else MIN_UDP_PAYLOAD
