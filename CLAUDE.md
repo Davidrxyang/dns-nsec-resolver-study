@@ -22,7 +22,7 @@ Variants under study:
 
 Resolvers to study: BIND, Unbound, Knot Resolver, PowerDNS Recursor.
 
-Working hypothesis (from documentation review, to be confirmed experimentally): apart from NSEC vs NSEC3, resolvers do not explicitly differentiate the variants. Known implicit handling: Knot disables aggressive negative caching (ANC) for minimal ranges; PowerDNS disables ANC for minimally covering NSEC3; BIND lists RFC 4470 and has recent compact-denial support.
+Working hypothesis (from documentation review, to be confirmed experimentally): apart from NSEC vs NSEC3, resolvers do not explicitly differentiate the variants. Known implicit handling: Knot disables aggressive negative caching (ANC) for minimal ranges; PowerDNS disables ANC for minimally covering NSEC3; BIND lists RFC 4470, synthesizes (ANC) from NSEC only, never NSEC3, and its compact-denial support so far is in `dig` only (see section 6).
 
 Three processing points to examine per resolver: **intake** (from authoritative), **storage** (cache), **output** (to client).
 
@@ -204,7 +204,20 @@ Shape: one NSEC owned by the QNAME itself, next name `\000.` + QNAME, bitmap `RR
 
 ## 6. Documentation-review findings (from the researcher's notes)
 
-- **BIND 9:** lists RFC 4470, not RFC 9824, yet CDOE support appears in 9.18.x release notes (notes for 9.18.38) and GitLab issues (5319); NXNAME work in MRs 11500 and 12750. Open question: is 4470 support only online-signing, or is there a mechanism that identifies minimally covering NSEC?
+- **BIND 9** (release notes and ARM checked 2026-10-13):
+  - Lists RFC 4470, not RFC 9824.
+  - **Compact denial is `dig`-only.** 9.18.38 and 9.20.11 add CO-flag display and `+coflag` to dig [GL #5319]. MR !11500 (main) and its 9.20 backport !12750 only print type 128 as `NXNAME` instead of `TYPE128` [issue #5721]. No release note shows resolver or validator handling of NXNAME or compact answers.
+  - **`synth-from-dnssec` (RFC 8198 ANC):** default `yes` again since 9.18.0 (disabled in 9.14.8) [GL #1265]. NSEC only: the current ARM says NSEC3 synthesis is "planned for the future". Expect no ANC from any NSEC3 variant.
+  - **Version-sensitive fixes in 9.20.x:**
+    - 9.20.12 fixed ANC not working when no parent NSEC was cached [GL #5422].
+    - 9.20.21 limits NSEC3 iterations when validating referrals to unsigned delegations (CVE-2026-1519) [GL #5708].
+    - 9.20.26 (one source says .27) changed denial-proof handling:
+      - invalid signed wildcards rejected, a bug that broke synth (CVE-2026-11721) [GL #5871];
+      - out-of-zone NSEC next names with synth (CVE-2026-13321) [GL #5873];
+      - padded negative responses capped (CVE-2026-11605) [GL #4463].
+    - So pin an exact 9.20.x, at or above 9.20.26, and record `named -V`.
+  - **Sources:** https://bind9.readthedocs.io/en/stable/notes.html, https://downloads.isc.org/isc/bind9/9.18.41/doc/arm/html/notes.html, https://bind9.readthedocs.io/en/v9_18_1/notes.html, https://bind9.readthedocs.io/en/stable/_sources/reference.rst.txt (synth-from-dnssec), https://gitlab.isc.org/isc-projects/bind9/-/merge_requests/11500.
+  - **Open:** is 4470 support only online signing, or is there a mechanism that identifies minimally covering NSEC? Does `static-stub` `server-addresses` accept a port? The ARM text mentions IP addresses only.
 - **Unbound:** RFC compliance page lists neither 4470 nor 9824; has aggressive-NSEC docs.
 - **Knot Resolver:** RFC list lacks both; release notes mention ANC disabled for minimal ranges (4.1.0, 2019).
 - **PowerDNS Recursor:** compliance page lacks both; ANC disabled for minimally covering NSEC3 (pdns-users, June 2023).
@@ -259,9 +272,22 @@ nsec-responder/
 
 ## 10. Immediate next actions
 
-1. Create the repo layout and `pip install dnspython cryptography`.
-2. Save the three golden fixtures with full dig output.
-3. Implement and pass step 1 gates (section 4).
-4. Check the installed `delv` flags and trust-anchor format.
-5. Read RFC 4470, RFC 7129 Appendix B, RFC 9824, and RFC 5155 section 7 before step 2 and step 3.
-6. Then proceed to step 2 (vanilla NSEC denial).
+Steps 1 and 2 are done, the golden fixtures are saved, and the delv flags are verified. Next:
+
+1. **Local resolver pipeline (planned).** Docker Compose on the laptop: responder `172.30.0.10:53`, BIND (ISC image `internetsystemsconsortium/bind9`, 9.20.x ≥ 9.20.26 pinned by digest) `172.30.0.20:53`, client `172.30.0.30`.
+   - Image checked 2026-10-13:
+     - `internetsystemsconsortium/bind9:9.20` is **BIND 9.20.29** on Alpine 3.24. ISC publishes only branch tags (no `9.20.29` tag exists), so pin by **digest** (`docker inspect --format '{{index .RepoDigests 0}}' …`) and record it with the version. **Pinned:** `internetsystemsconsortium/bind9@sha256:071465f88068854d0ceadd9b985fb1acae4071e80754e545cd811fde57541ad0` = BIND 9.20.29 (pulled 2026-10-13).
+     - Built with `--enable-dnstap`; supports ECDSAP256SHA256; includes `dig 9.20.29`, so the client can use the same image.
+     - No bash (busybox `sh`) and no tcpdump; capture on the host's Docker bridge.
+     - Entrypoint `/usr/sbin/named -u bind`; default cmd `-f -c /etc/bind/named.conf -L /var/log/bind/default.log`.
+     - Mount config into `/etc/bind/` and logs at `/var/log/bind`. Mounted dirs must be writable by the container's `bind` user (**uid 53, gid 53**), e.g. `sudo chown 53:$(id -g) logs/bind && chmod 775 logs/bind`.
+     - `rndc` needs a key in `/etc/bind/rndc.conf`.
+   - BIND config: a `static-stub` zone for `nsec.test` pointing at the responder, the generated `zones/nsec.test.anchor` included as `trust-anchors`, `allow-recursion` limited to the client, `synth-from-dnssec yes`.
+   - Logs: responder `queries.jsonl`; BIND dnstap if `named -V` shows `--enable-dnstap` (else query log + tcpdump); `rndc dumpdb -cache` for cache contents.
+   - Bring-up order: dig from BIND's container straight to the responder; dig at BIND locally (expect `ad`); client → BIND for NXDOMAIN (expect `ad`, responder sees RD=0 DO=1); repeat (cached); a second name in the same gap (ANC); a wrong anchor (SERVFAIL).
+   - Later on AWS: same images and configs; then replace the static-stub with a real delegated domain (section 8).
+2. Step 2 leftovers:
+   - make the broken-proof delv checks permanent tests;
+   - add a NODATA golden fixture (root `. AAAA`);
+   - diff the chain against BIND `dnssec-signzone` (needs `bind9-utils`).
+3. Step 3 (vanilla NSEC3). Read RFC 5155 §7 first; RFC 4470, RFC 7129 App. B, and RFC 9824 before step 4.
