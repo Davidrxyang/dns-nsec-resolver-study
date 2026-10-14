@@ -67,6 +67,11 @@ class SignedZone:
             if n != self.origin and node.get_rdataset(dns.rdataclass.IN, dns.rdatatype.NS)
         }
 
+        # Signed records that live outside the zone's name tree, e.g. NSEC3 at
+        # hashed owner names: queries for those names must behave as if the
+        # names did not exist (RFC 5155 §7.2.8). (owner, rdtype) -> rdataset
+        self.extra: dict[tuple[dns.name.Name, int], dns.rdataset.Rdataset] = {}
+
         self.denial = denial if denial is not None else NsecDenial()
         self.denial.prepare(self)
 
@@ -126,21 +131,21 @@ class SignedZone:
         now = int(time.time())
         inception = now - INCEPTION_SKEW
         expiration = now + SIG_LIFETIME
-        for owner, node in self.zone.nodes.items():
-            for rds in node.rdatasets:
-                if rds.rdtype == dns.rdatatype.RRSIG or not self.is_authoritative(owner, rds.rdtype):
-                    continue
-                rrset = dns.rrset.RRset(owner, rds.rdclass, rds.rdtype)
-                rrset.update(rds)
-                sig = dns.dnssec.sign(
-                    rrset,
-                    self.key,
-                    self.origin,
-                    self.dnskey,
-                    inception=inception,
-                    expiration=expiration,
-                )
-                self.rrsigs[(owner, rds.rdtype)] = dns.rrset.from_rdata(owner, rds.ttl, sig)
+        rrsets = [(owner, rds) for owner, node in self.zone.nodes.items() for rds in node.rdatasets
+                  if rds.rdtype != dns.rdatatype.RRSIG and self.is_authoritative(owner, rds.rdtype)]
+        rrsets += [(owner, rds) for (owner, _), rds in self.extra.items()]
+        for owner, rds in rrsets:
+            rrset = dns.rrset.RRset(owner, rds.rdclass, rds.rdtype)
+            rrset.update(rds)
+            sig = dns.dnssec.sign(
+                rrset,
+                self.key,
+                self.origin,
+                self.dnskey,
+                inception=inception,
+                expiration=expiration,
+            )
+            self.rrsigs[(owner, rds.rdtype)] = dns.rrset.from_rdata(owner, rds.ttl, sig)
 
     def get(self, name, rdtype, owner=None, ttl=None):
         """Return (rrset, rrsig_rrset or None) for an existing RRset, else None.
@@ -150,7 +155,7 @@ class SignedZone:
         stay valid either way: validators canonicalize names and cap TTLs at
         the RRSIG's original TTL.
         """
-        rds = self.zone.get_rdataset(name, rdtype)
+        rds = self.extra.get((name, rdtype)) or self.zone.get_rdataset(name, rdtype)
         if rds is None:
             return None
         owner = owner if owner is not None else name

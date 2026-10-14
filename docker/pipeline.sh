@@ -11,6 +11,9 @@ up() {
     # host user owns is not writable by it, and Docker would create a
     # missing one as root.
     mkdir -p logs/bind && chmod 777 logs/bind
+    # Write every zone's trust anchor before BIND starts and includes them.
+    $DC build responder || exit 1
+    $DC run --rm --no-deps responder --addr 0.0.0.0 --port 53 --anchors-only || exit 1
     $DC up -d --build || exit 1
     for _ in $(seq 20); do
         $DC exec -T bind dig @127.0.0.1 +short +time=1 +tries=1 nsec.test SOA >/dev/null 2>&1 && { echo "pipeline up"; return; }
@@ -60,6 +63,12 @@ checks() {
         echo "OBS   5 no ANC: BIND asked the responder for $b"
     fi
 
+    # NSEC3 zone: the same path for a second variant ("c" gives the full
+    # three-record closest encloser proof).
+    out=$($DC exec -T client dig @172.30.0.20 +dnssec "c${tag}.nsec3.test." A)
+    check "5b NSEC3 zone via BIND: NXDOMAIN"             "$out" 'status: NXDOMAIN'
+    check "5b NSEC3 zone via BIND: validated (ad)"       "$out" 'flags: qr rd ra ad;'
+
     # 6. Negative control: with the responder stopped, BIND must fail rather
     # than answer. Flush first and use another gap (ns1 < p... < secure);
     # otherwise the cached insecure->ns1 NSEC would let BIND synthesize.
@@ -67,7 +76,7 @@ checks() {
     $DC stop responder >/dev/null 2>&1
     out=$($DC exec -T client dig @172.30.0.20 +dnssec +time=30 +tries=1 "p${tag}.nsec.test." A)
     $DC start responder >/dev/null 2>&1
-    check "6 responder down: SERVFAIL"                   "$out" 'status: SERVFAIL'
+    check "6 negative control: responder stopped, BIND correctly returns SERVFAIL" "$out" 'status: SERVFAIL'
     exit $fail
 }
 

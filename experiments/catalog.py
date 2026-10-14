@@ -5,15 +5,27 @@ Each entry states the question, the method, what is expected and why
 renders this file into experiments/CATALOG.md, so the catalog and the code
 cannot drift. Entries with run=None are planned and need responder changes.
 
+IDs: Nxx run against nsec.test (vanilla NSEC); N3-xx against nsec3.test
+(vanilla NSEC3, same zone content), as counterparts of the Nxx with the same
+number. NSEC3 "gaps" are hash intervals, so same-gap names are found by
+hashing candidates against the zone's real chain (nsec3_same_gap).
+
 Gaps in nsec.test used below (canonical order, zones/nsec.test.zone):
   insecure -> ns1     labels starting with "m"   ("m..." sorts between them)
   ns1      -> secure  labels starting with "p"
 The apex NSEC (nsec.test -> host.ent) covers *.nsec.test for every NXDOMAIN.
 """
 
+import bisect
+import functools
+import random
+import tempfile
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
+
+import dns.dnssec
 
 RFC8198 = "RFC 8198"
 BIND_ARM = "BIND ARM synth-from-dnssec (NSEC only)"
@@ -57,18 +69,24 @@ def synth_outcome(second, expect_synth: bool):
 
 @experiment(
     id="N01", title="NXDOMAIN synthesis, same NSEC gap",
-    question="After one validated NXDOMAIN, does BIND answer a different name in the same gap without asking the responder? What TTLs does the synthesized answer carry?",
-    method="flush; m<tag>a A (prime); m<tag>b A. Compare upstream queries and authority TTLs.",
-    expected="Synthesized NXDOMAIN with AD; TTLs no higher than the primed NSEC's remaining TTL.",
+    question="After one validated NXDOMAIN, does BIND answer a different name in the same gap without asking the responder? Does the synthesized answer carry the remaining TTL of the cached NSEC/SOA, or a fresh one?",
+    method="flush; m<tag>a A (prime); wait 10 s; m<tag>b A. Compare upstream queries and authority TTLs.",
+    expected="Synthesized NXDOMAIN with AD, with TTLs about 50 (60 minus the 10 s wait), not reset to 60.",
     sources=f"{RFC8198} §5.1, §5.4; {BIND_ARM}",
 )
 def n01(ctx):
+    wait = 10
     a = ctx.probe(ctx.label("m") + "a.nsec.test.")
+    time.sleep(wait)
     b = ctx.probe(ctx.label("m") + "b.nsec.test.")
     outcome, ok = synth_outcome(b, True)
-    ok = ok and b.rcode == "NXDOMAIN" and b.ad
-    ttl = lambda p: sorted({r["ttl"] for r in p.authority})
-    return outcome, ok, f"prime TTLs {ttl(a)}, second TTLs {ttl(b)}"
+    ttls = lambda p: sorted({r["ttl"] for r in p.authority})
+    first, second = ttls(a), ttls(b)
+    # Remaining TTL: second <= first - wait (+1 for whole-second rounding).
+    remaining = bool(first and second) and max(second) <= max(first) - wait + 1
+    ok = ok and b.rcode == "NXDOMAIN" and b.ad and remaining
+    kind = "remaining TTL" if remaining else "TTL not decremented"
+    return outcome, ok, f"prime TTLs {first}, after {wait}s {second} ({kind})"
 
 
 @experiment(
@@ -224,6 +242,75 @@ def n12(ctx):
     time.sleep(65)
     b = ctx.probe(ctx.label("m") + "b.nsec.test.")
     return synth_outcome(b, False) + ("",)
+
+
+# --- NSEC3 counterparts (zone nsec3.test) --------------------------------
+
+NSEC3_ZONE = Path(__file__).resolve().parent.parent / "zones" / "nsec3.test.zone"
+
+
+@functools.cache
+def _nsec3_chain():
+    """Sorted owner hashes of nsec3.test, built from the zone file by the responder."""
+    from responder.denial import Nsec3Denial
+    from responder.zone import SignedZone
+    with tempfile.TemporaryDirectory() as d:  # throwaway key: only hashes are needed
+        return tuple(SignedZone(NSEC3_ZONE, Path(d), Nsec3Denial()).denial.hashes)
+
+
+def nsec3_same_gap(suffix, count=2, prefix="r"):
+    """`count` fresh labels whose <label>.<suffix> hashes fall in one NSEC3 gap."""
+    chain = _nsec3_chain()
+    gap = lambda name: chain[bisect.bisect_right(chain, dns.dnssec.nsec3_hash(name, None, 0, 1)) - 1]
+    want, out = None, []
+    while len(out) < count:
+        label = f"{prefix}{random.randrange(10**9)}"
+        g = gap(f"{label}.{suffix}")
+        want = want or g
+        if g == want:
+            out.append(label)
+    return out
+
+
+@experiment(
+    id="N3-01", title="NSEC3: NXDOMAIN, same hash gap (counterpart of N01)",
+    question="After one validated NSEC3 NXDOMAIN, is a different name whose hash falls in the same NSEC3 gap answered without the responder?",
+    method="flush; two labels chosen so their hashes share one NSEC3 gap; <l1>.nsec3.test A (prime); <l2>.nsec3.test A.",
+    expected="Upstream: BIND synthesizes from NSEC only; NSEC3 synthesis is 'planned for the future'. RFC 8198 §5.2 would allow it.",
+    sources=f"{BIND_ARM}; {RFC8198} §5.2",
+)
+def n3_01(ctx):
+    l1, l2 = nsec3_same_gap("nsec3.test.")
+    ctx.probe(f"{l1}.nsec3.test.")
+    b = ctx.probe(f"{l2}.nsec3.test.")
+    return synth_outcome(b, False) + (f"rcode {b.rcode}, AD {b.ad}",)
+
+
+@experiment(
+    id="N3-03", title="NSEC3: NODATA, other type at an existing name (counterpart of N03)",
+    question="After NODATA for www AAAA (matching NSEC3 lists A TXT RRSIG), is www MX answered without the responder?",
+    method="flush; www.nsec3.test AAAA (prime); www.nsec3.test MX.",
+    expected="Upstream (no NSEC3 synthesis in BIND).",
+    sources=f"{BIND_ARM}; {RFC8198} §5.2",
+)
+def n3_03(ctx):
+    ctx.probe("www.nsec3.test.", "AAAA")
+    b = ctx.probe("www.nsec3.test.", "MX")
+    return synth_outcome(b, False) + (f"rcode {b.rcode}, AD {b.ad}",)
+
+
+@experiment(
+    id="N3-06", title="NSEC3: positive wildcard (counterpart of N06)",
+    question="After a wildcard answer for <l1>.wild.nsec3.test (proved by an NSEC3 covering the next closer name), is <l2>.wild, whose hash falls in the same gap, answered without the responder?",
+    method="flush; two labels whose <label>.wild.nsec3.test hashes share one NSEC3 gap; query both, A.",
+    expected="Upstream (no NSEC3-based wildcard synthesis in BIND). RFC 8198 §5.3 would allow it.",
+    sources=f"{BIND_ARM}; {RFC8198} §5.3",
+)
+def n3_06(ctx):
+    l1, l2 = nsec3_same_gap("wild.nsec3.test.")
+    ctx.probe(f"{l1}.wild.nsec3.test.")
+    b = ctx.probe(f"{l2}.wild.nsec3.test.")
+    return synth_outcome(b, False) + (f"rcode {b.rcode}, AD {b.ad}, answers {[r['type'] for r in b.answer]}",)
 
 
 # --- planned: need deliberately odd responder output (responder knobs) ----

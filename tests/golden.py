@@ -5,6 +5,8 @@ Both a dig text capture and a live dns.message.Message reduce to the same
 plays. Signatures, serials, and names are deliberately left out.
 """
 
+import base64
+import hashlib
 import re
 from pathlib import Path
 
@@ -105,4 +107,79 @@ def nxdomain_shape(parsed, qname):
         "rrsig_labels_match_owner": all(
             rd.labels == len(n) - 1 for n, _, rd in auth if rd.rdtype == dns.rdatatype.RRSIG
         ),
+    }
+
+
+# --- NSEC3 -------------------------------------------------------------------
+
+def nsec3_hash(name, salt=b"", iterations=0):
+    """RFC 5155 §5, written independently of dnspython's nsec3_hash."""
+    if isinstance(name, str):
+        name = dns.name.from_text(name)
+    wire = name.canonicalize().to_wire()
+    h = hashlib.sha1(wire + salt).digest()
+    for _ in range(iterations):
+        h = hashlib.sha1(h + salt).digest()
+    return base64.b32hexencode(h).decode().rstrip("=").upper()
+
+
+def nsec3_spans(records):
+    """[(owner_hash, next_hash, rdata)] for NSEC3 records [(name, ttl, rdata)]."""
+    out = []
+    for name, _, rd in records:
+        if rd.rdtype == dns.rdatatype.NSEC3:
+            nxt = base64.b32hexencode(rd.next).decode().rstrip("=").upper()
+            out.append((name.labels[0].decode().upper(), nxt, rd))
+    return out
+
+
+def hash_covers(owner, nxt, h):
+    if owner < nxt:
+        return owner < h < nxt
+    return h > owner or h < nxt
+
+
+def nsec3_nxdomain_shape(parsed, qname):
+    """Role of each NSEC3 in an NXDOMAIN: closest-encloser match, next-closer
+    cover, wildcard cover (RFC 5155 §7.2.2). The closest encloser is the
+    longest ancestor of qname whose hash matches an NSEC3 owner."""
+    qname = dns.name.from_text(qname)
+    auth = parsed["authority"]
+    spans = nsec3_spans(auth)
+    rd0 = spans[0][2]
+    salt, it = rd0.salt, rd0.iterations
+    owners = {o for o, _, _ in spans}
+    ce = qname.parent()
+    while nsec3_hash(ce, salt, it) not in owners:
+        ce = ce.parent()
+    nc = dns.name.Name(qname.labels[-(len(ce.labels) + 1):])
+    wc = dns.name.Name((b"*",) + ce.labels)
+    roles = []
+    for o, n, _ in spans:
+        r = []
+        if o == nsec3_hash(ce, salt, it):
+            r.append("ce-match")
+        if hash_covers(o, n, nsec3_hash(nc, salt, it)):
+            r.append("nc-cover")
+        if hash_covers(o, n, nsec3_hash(wc, salt, it)):
+            r.append("wc-cover")
+        roles.append("+".join(r))
+    soa = next(rd for _, _, rd in auth if rd.rdtype == dns.rdatatype.SOA)
+    soa_ttl = next(ttl for _, ttl, rd in auth if rd.rdtype == dns.rdatatype.SOA)
+
+    def kind(rd):
+        t = dns.rdatatype.to_text(rd.rdtype)
+        return f"RRSIG {dns.rdatatype.to_text(rd.type_covered)}" if t == "RRSIG" else t
+
+    return {
+        "rcode": parsed["rcode"],
+        "flags": sorted(parsed["flags"]),
+        "do": parsed["do"],
+        "answer": len(parsed["answer"]),
+        "authority": [kind(rd) for _, _, rd in auth],
+        "nsec3_roles": roles,
+        "hash_alg": rd0.algorithm,
+        "ttls_are_negative_ttl": all(ttl == min(soa_ttl, soa.minimum) for _, ttl, _ in auth),
+        "rrsig_labels_match_owner": all(
+            rd.labels == len(n) - 1 for n, _, rd in auth if rd.rdtype == dns.rdatatype.RRSIG),
     }

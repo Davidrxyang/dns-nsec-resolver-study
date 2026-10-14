@@ -29,6 +29,11 @@ dig -p 5300 @127.0.0.1 +dnssec +norec foo.secure.nsec.test A   # referral (DS)
 dig -p 5300 @127.0.0.1 +dnssec +norec insecure.nsec.test DS    # no-DS proof
 
 delv -p 5300 @127.0.0.1 -a zones/nsec.test.anchor +root=nsec.test nope.nsec.test A
+
+# nsec3.test: same zone content, vanilla NSEC3 (hashed names, closest-encloser proofs)
+dig -p 5300 @127.0.0.1 +dnssec +norec nsec3.test NSEC3PARAM
+dig -p 5300 @127.0.0.1 +dnssec +norec c.nsec3.test A           # NXDOMAIN, 3 NSEC3
+delv -p 5300 @127.0.0.1 -a zones/nsec3.test.anchor +root=nsec3.test c.nsec3.test A
 ```
 
 `delv` should print `; fully validated` (or `; negative response, fully validated`).

@@ -19,19 +19,24 @@ def main():
     p.add_argument("--port", type=int, default=5300)
     p.add_argument("--zone-dir", type=Path, default=REPO / "zones")
     p.add_argument("--log", type=Path, default=REPO / "logs" / "queries.jsonl")
+    p.add_argument("--anchors-only", action="store_true",
+                   help="load zones, write keys and trust anchors, then exit")
     args = p.parse_args()
 
     zones = []
     for zf in sorted(args.zone_dir.glob("*.zone")):
         conf_file = zf.with_suffix(".toml")
         conf = tomllib.loads(conf_file.read_text()) if conf_file.exists() else {}
-        denial = VARIANTS[conf.get("denial", "nsec")]()
+        params = {k: v for k, v in conf.items() if k != "denial"}
+        denial = VARIANTS[conf.get("denial", "nsec")](**params)
         z = SignedZone(zf, args.zone_dir / "keys", denial)
         anchor = args.zone_dir / f"{z.origin.to_text(omit_final_dot=True)}.anchor"
         anchor.write_text(z.anchor_text())
         print(f"loaded {z.origin} denial={conf.get('denial', 'nsec')} key_tag={z.key_tag} anchor={anchor}")
         print(f"  {z.ds_text()}")
         zones.append(z)
+    if args.anchors_only:
+        return
 
     args.log.parent.mkdir(parents=True, exist_ok=True)
     responder = Responder(zones, args.log)

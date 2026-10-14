@@ -1,0 +1,6 @@
+# Per-zone config. denial selects the denial-of-existence variant.
+# NSEC3 parameters follow RFC 9276: 0 extra iterations, no salt, no opt-out.
+denial = "nsec3"
+iterations = 0
+salt = ""
+opt_out = false

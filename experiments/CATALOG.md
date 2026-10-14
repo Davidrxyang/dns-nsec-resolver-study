@@ -5,7 +5,7 @@ Zone: `nsec.test` (vanilla NSEC). Resolver: BIND in the local Docker pipeline. R
 
 | ID | Status | Title | Expected | Sources |
 |---|---|---|---|---|
-| N01 | runnable | NXDOMAIN synthesis, same NSEC gap | Synthesized NXDOMAIN with AD; TTLs no higher than the primed NSEC's remaining TTL. | RFC 8198 §5.1, §5.4; BIND ARM synth-from-dnssec (NSEC only) |
+| N01 | runnable | NXDOMAIN synthesis, same NSEC gap | Synthesized NXDOMAIN with AD, with TTLs about 50 (60 minus the 10 s wait), not reset to 60. | RFC 8198 §5.1, §5.4; BIND ARM synth-from-dnssec (NSEC only) |
 | N02 | runnable | No synthesis across gaps | Upstream query for the second name (no covering NSEC cached). | RFC 8198 §5.1 |
 | N03 | runnable | NODATA synthesis, other type at an existing name | Synthesized NODATA (the matching NSEC proves MX is absent). BIND support unknown. | RFC 8198 §5.1 |
 | N04 | runnable | NODATA synthesis at an empty non-terminal | Synthesized NODATA. BIND support unknown (ENT proofs use a covering, not matching, NSEC). | RFC 8198 §5.1; RFC 4035 §5.4 |
@@ -17,6 +17,9 @@ Zone: `nsec.test` (vanilla NSEC). Resolver: BIND in the local Docker pipeline. R
 | N10 | runnable | Priming from a DO=0 client | Synthesized (the resolver validates regardless of the client's DO). | RFC 8198 §5; RFC 4035 §4 |
 | N11 | runnable | Upstream queries for a deep nonexistent name | Relaxed QNAME minimisation (BIND default): NS query for m<tag>.nsec.test, then on NXDOMAIN a fallback full query for d1.d2.m<tag>, although the cached NSEC already proves it. Plus a DNSKEY fetch after the flush. | BIND ARM qname-minimization (relaxed: falls back on NXDOMAIN); RFC 9156; RFC 8020 |
 | N12 | runnable (slow) | Synthesis stops after the NSEC TTL | Upstream. | RFC 8198 §5.4; RFC 9077 |
+| N3-01 | runnable | NSEC3: NXDOMAIN, same hash gap (counterpart of N01) | Upstream: BIND synthesizes from NSEC only; NSEC3 synthesis is 'planned for the future'. RFC 8198 §5.2 would allow it. | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2 |
+| N3-03 | runnable | NSEC3: NODATA, other type at an existing name (counterpart of N03) | Upstream (no NSEC3 synthesis in BIND). | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2 |
+| N3-06 | runnable | NSEC3: positive wildcard (counterpart of N06) | Upstream (no NSEC3-based wildcard synthesis in BIND). RFC 8198 §5.3 would allow it. | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.3 |
 | P01 | planned | NSEC TTL above SOA MINIMUM | Capped at the negative TTL. | RFC 8198 §5.4; RFC 9077 §3.4 |
 | P02 | planned | NSEC TTL above 3 hours | Capped (RECOMMENDED), or at max-ncache-ttl. | RFC 8198 §5.4; BIND ARM max-ncache-ttl |
 | P03 | planned | Broken proof is not cached or reused | SERVFAIL; no synthesis from the incomplete proof. | RFC 4035 §5.4; BIND CVE-2026-11721 fix notes |
@@ -25,9 +28,9 @@ Zone: `nsec.test` (vanilla NSEC). Resolver: BIND in the local Docker pipeline. R
 
 ## N01: NXDOMAIN synthesis, same NSEC gap
 
-- **Question:** After one validated NXDOMAIN, does BIND answer a different name in the same gap without asking the responder? What TTLs does the synthesized answer carry?
-- **Method:** flush; m<tag>a A (prime); m<tag>b A. Compare upstream queries and authority TTLs.
-- **Expected:** Synthesized NXDOMAIN with AD; TTLs no higher than the primed NSEC's remaining TTL.
+- **Question:** After one validated NXDOMAIN, does BIND answer a different name in the same gap without asking the responder? Does the synthesized answer carry the remaining TTL of the cached NSEC/SOA, or a fresh one?
+- **Method:** flush; m<tag>a A (prime); wait 10 s; m<tag>b A. Compare upstream queries and authority TTLs.
+- **Expected:** Synthesized NXDOMAIN with AD, with TTLs about 50 (60 minus the 10 s wait), not reset to 60.
 - **Sources:** RFC 8198 §5.1, §5.4; BIND ARM synth-from-dnssec (NSEC only)
 
 ## N02: No synthesis across gaps
@@ -106,6 +109,27 @@ Zone: `nsec.test` (vanilla NSEC). Resolver: BIND in the local Docker pipeline. R
 - **Method:** flush; m<tag>a A (prime); wait 65 s; m<tag>b A.
 - **Expected:** Upstream.
 - **Sources:** RFC 8198 §5.4; RFC 9077
+
+## N3-01: NSEC3: NXDOMAIN, same hash gap (counterpart of N01)
+
+- **Question:** After one validated NSEC3 NXDOMAIN, is a different name whose hash falls in the same NSEC3 gap answered without the responder?
+- **Method:** flush; two labels chosen so their hashes share one NSEC3 gap; <l1>.nsec3.test A (prime); <l2>.nsec3.test A.
+- **Expected:** Upstream: BIND synthesizes from NSEC only; NSEC3 synthesis is 'planned for the future'. RFC 8198 §5.2 would allow it.
+- **Sources:** BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2
+
+## N3-03: NSEC3: NODATA, other type at an existing name (counterpart of N03)
+
+- **Question:** After NODATA for www AAAA (matching NSEC3 lists A TXT RRSIG), is www MX answered without the responder?
+- **Method:** flush; www.nsec3.test AAAA (prime); www.nsec3.test MX.
+- **Expected:** Upstream (no NSEC3 synthesis in BIND).
+- **Sources:** BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2
+
+## N3-06: NSEC3: positive wildcard (counterpart of N06)
+
+- **Question:** After a wildcard answer for <l1>.wild.nsec3.test (proved by an NSEC3 covering the next closer name), is <l2>.wild, whose hash falls in the same gap, answered without the responder?
+- **Method:** flush; two labels whose <label>.wild.nsec3.test hashes share one NSEC3 gap; query both, A.
+- **Expected:** Upstream (no NSEC3-based wildcard synthesis in BIND). RFC 8198 §5.3 would allow it.
+- **Sources:** BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.3
 
 ## P01: NSEC TTL above SOA MINIMUM
 

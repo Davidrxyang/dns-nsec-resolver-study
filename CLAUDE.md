@@ -62,6 +62,19 @@ Mitigation for fidelity risk: validate our vanilla NSEC/NSEC3 output against a r
 
 **Step 3. Vanilla NSEC3.** Configurable algorithm, iterations, salt, opt-out flag; NSEC3PARAM at apex. Closest-encloser proof: match for closest encloser, cover for next-closer name, cover for wildcard. Gate: matches `.com` fixture shape; our hash function reproduces real `.com` hashes.
 
+  **DONE 2026-10-14.**
+  - `Nsec3Denial` is in `responder/denial.py`; zone `nsec3.test` has the same content as `nsec.test`; `zones/nsec3.test.toml` sets `iterations`, `salt` and `opt_out` (RFC 9276 defaults: 0, empty, false).
+  - NSEC3 records are kept in `SignedZone.extra`, outside the name tree, so hashed owner names answer NXDOMAIN (RFC 5155 §7.2.8). ENTs get NSEC3 with empty bitmaps. An unsigned delegation's bitmap is `NS` only. NSEC3PARAM flags are always 0. A run-time hash collision raises, which the server turns into SERVFAIL (§7.2.9).
+  - Opt-out drops unsigned delegations from the chain, and referrals and DS queries then carry the closest-provable-encloser proof.
+  - **Verified:**
+    - the hash reproduces `com.` both with dnspython and with an independent hashlib implementation (`tests/golden.nsec3_hash`);
+    - the `.com` fixture decodes to CE match, next-closer cover, wildcard cover, and our NXDOMAIN for `c.nsec3.test` has the same shape;
+    - delv fully validates every case, including opt-out;
+    - delv rejects a proof missing its next-closer cover (`broken trust chain`).
+  - Tests: `tests/test_step3.py` (17). Gates: the `s3` section of `tests/gates.sh`.
+  - Pipeline: BIND has a static-stub for `nsec3.test`; `pipeline.sh up` runs `responder --anchors-only` before BIND starts.
+  - Experiments N3-01, N3-03 and N3-06: BIND **never synthesizes from NSEC3**. Their NSEC counterparts N01, N03 and N06 are synthesized.
+
 **Step 4. Variants (one switch per zone).** Minimally covering NSEC and NSEC3 (RFC 4470, RFC 7129 App. B); CDOE NSEC; CDOE NSEC3. Gate: CDOE NSEC output matches the Cloudflare fixture shape; for NSEC3 variants there is no real public reference, so rely on RFC text and validators.
 
 **Step 5. Logging and control.** Log timestamp, source, transport, qname, qtype, DO, EDNS size, RD, and a hash of the response sent. Per-zone config; later per-query overrides for deliberate edge cases.
@@ -295,4 +308,4 @@ Steps 1 and 2 are done, the golden fixtures are saved, and the delv flags are ve
    - make the broken-proof delv checks permanent tests;
    - add a NODATA golden fixture (root `. AAAA`);
    - diff the chain against BIND `dnssec-signzone` (needs `bind9-utils`).
-3. Step 3 (vanilla NSEC3). Read RFC 5155 §7 first; RFC 4470, RFC 7129 App. B, and RFC 9824 before step 4.
+3. Step 4 (variants): read RFC 4470, RFC 7129 App. B, and RFC 9824 first.

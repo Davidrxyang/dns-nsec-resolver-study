@@ -38,7 +38,7 @@ services:
       - rndc-confgen -a -u bind && exec /usr/sbin/named -u bind -f -c /etc/bind/named.conf
     volumes:
       - ./docker/bind/named.conf:/etc/bind/named.conf:ro
-      - ./zones/nsec.test.anchor:/etc/bind/nsec.test.anchor:ro
+      - ./zones:/etc/bind/zones:ro       # trust anchors (*.anchor)
       - ./logs/bind:/var/log/bind
     networks:
       lab:

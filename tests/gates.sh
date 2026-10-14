@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Step 1 and step 2 gates against a running responder (venv/bin/python -m responder).
+# Step 1, 2, and 3 gates against a running responder (venv/bin/python -m responder).
 # Usage: tests/gates.sh [port]
 set -u
 PORT=${1:-5300}
@@ -52,6 +52,26 @@ done
 for q in "x.wild.nsec.test A" "secure.nsec.test DS" "nsec.test NSEC"; do
     out=$(delv -p "$PORT" @127.0.0.1 -a "$ANCHOR" +root=nsec.test $q 2>&1)
     check "s2 delv $q" "$out" '^; fully validated'
+done
+
+# Step 3: vanilla NSEC3 (zone nsec3.test).
+A3=zones/nsec3.test.anchor
+out=$($D +dnssec +norec nsec3.test NSEC3PARAM)
+check "s3 NSEC3PARAM 1 0 0 - at apex"     "$out" 'NSEC3PARAM[[:space:]]+1 0 0 -'
+out=$($D +dnssec +norec c.nsec3.test A)
+check "s3 nxdomain: rcode"               "$out" 'status: NXDOMAIN'
+check "s3 nxdomain: SOA + 3 NSEC3 + sigs" "$out" 'AUTHORITY: 8,'
+check "s3 nxdomain: 3 NSEC3 records"      "$(grep -c 'IN[[:space:]]NSEC3[[:space:]]' <<<"$out")" '^3$'
+out=$($D +dnssec +norec ent.nsec3.test A)
+check "s3 ENT: matching NSEC3, empty bitmap" "$out" 'NSEC3 1 0 0 - [0-9A-V]+$'
+for q in "c.nsec3.test A" "zzz.nsec3.test A" "www.nsec3.test AAAA" "ent.nsec3.test A" \
+         "foo.bar.ent.nsec3.test A" "a.b.wild.nsec3.test TXT" "insecure.nsec3.test DS"; do
+    out=$(delv -p "$PORT" @127.0.0.1 -a "$A3" +root=nsec3.test $q 2>&1)
+    check "s3 delv $q" "$out" '^; negative response, fully validated'
+done
+for q in "x.wild.nsec3.test A" "secure.nsec3.test DS" "nsec3.test NSEC3PARAM"; do
+    out=$(delv -p "$PORT" @127.0.0.1 -a "$A3" +root=nsec3.test $q 2>&1)
+    check "s3 delv $q" "$out" '^; fully validated'
 done
 
 exit $fail
