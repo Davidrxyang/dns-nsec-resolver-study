@@ -183,3 +183,34 @@ def nsec3_nxdomain_shape(parsed, qname):
         "rrsig_labels_match_owner": all(
             rd.labels == len(n) - 1 for n, _, rd in auth if rd.rdtype == dns.rdatatype.RRSIG),
     }
+
+
+# --- compact denial (RFC 9824) ------------------------------------------------
+
+def compact_nsec_shape(parsed, qname):
+    """Shape of an RFC 9824 NSEC compact answer for a nonexistent name. The
+    order of authority records is not significant (Cloudflare puts RRSIG SOA
+    last), so kinds are compared as a sorted list."""
+    qname = dns.name.from_text(qname)
+    auth = parsed["authority"]
+    soa = next(rd for _, _, rd in auth if rd.rdtype == dns.rdatatype.SOA)
+    soa_ttl = next(ttl for _, ttl, rd in auth if rd.rdtype == dns.rdatatype.SOA)
+    nsecs = [(n, rd) for n, _, rd in auth if rd.rdtype == dns.rdatatype.NSEC]
+
+    def kind(rd):
+        t = dns.rdatatype.to_text(rd.rdtype)
+        return f"RRSIG {dns.rdatatype.to_text(rd.type_covered)}" if t == "RRSIG" else t
+
+    return {
+        "rcode": parsed["rcode"],
+        "flags": sorted(parsed["flags"]),
+        "do": parsed["do"],
+        "answer": len(parsed["answer"]),
+        "authority_kinds": sorted(kind(rd) for _, _, rd in auth),
+        "nsec_owner_is_qname": [n == qname for n, _ in nsecs],
+        "nsec_next_is_successor": [rd.next == dns.name.Name((b"\x00",) + qname.labels) for _, rd in nsecs],
+        "nsec_types": [sorted(dns.rdatatype.to_text(t) for t in nsec_types(rd)) for _, rd in nsecs],
+        "ttls_are_negative_ttl": all(ttl == min(soa_ttl, soa.minimum) for _, ttl, _ in auth),
+        "rrsig_labels_match_owner": all(
+            rd.labels == len(n) - 1 for n, _, rd in auth if rd.rdtype == dns.rdatatype.RRSIG),
+    }

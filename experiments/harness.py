@@ -64,11 +64,12 @@ class Probe:
     qtype: str
     do: bool
     cd: bool
+    co: bool = False
     rcode: str = ""
     flags: list = field(default_factory=list)
     answer: list = field(default_factory=list)
     authority: list = field(default_factory=list)
-    upstream: list = field(default_factory=list)   # "qname qtype" BIND sent to the responder
+    upstream: list = field(default_factory=list)   # "qname qtype[ CO]" BIND sent to the responder
     error: str = ""
 
     @property
@@ -91,18 +92,22 @@ class Context:
         """Unique label; the first letter picks the NSEC gap (see zones/nsec.test.zone)."""
         return f"{prefix}{self.tag}"
 
-    def probe(self, qname, qtype="A", do=True, cd=False, timeout=5.0) -> Probe:
-        p = Probe(qname, qtype, do, cd)
+    def probe(self, qname, qtype="A", do=True, cd=False, co=False, timeout=5.0) -> Probe:
+        p = Probe(qname, qtype, do, cd, co)
         start = RESPONDER_LOG.stat().st_size if RESPONDER_LOG.exists() else 0
         q = dns.message.make_query(qname, qtype, want_dnssec=do, use_edns=0)
         if cd:
             q.flags |= dns.flags.CD
+        if co:
+            q.ednsflags |= dns.flags.CO
         try:
             r = dns.query.udp(q, RESOLVER, timeout=timeout)
             if r.flags & dns.flags.TC:
                 r = dns.query.tcp(q, RESOLVER, timeout=timeout)
             p.rcode = dns.rcode.to_text(r.rcode())
             p.flags = dns.flags.to_text(r.flags).split()
+            if r.ednsflags & dns.flags.CO:
+                p.flags.append("CO")
             p.answer = _rrsets(r.answer)
             p.authority = _rrsets(r.authority)
         except Exception as e:  # timeouts are results too
@@ -119,5 +124,5 @@ class Context:
         with RESPONDER_LOG.open() as f:
             f.seek(offset)
             lines = [json.loads(line) for line in f if line.strip()]
-        return [f"{e.get('qname', '?').lower()} {e.get('qtype', '?')}"
+        return [f"{e.get('qname', '?').lower()} {e.get('qtype', '?')}" + (" CO" if e.get("co") else "")
                 for e in lines if e.get("src") == RESOLVER]

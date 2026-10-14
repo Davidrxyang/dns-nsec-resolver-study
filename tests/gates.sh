@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Step 1, 2, and 3 gates against a running responder (venv/bin/python -m responder).
+# Step 1-4 gates against a running responder (venv/bin/python -m responder).
 # Usage: tests/gates.sh [port]
 set -u
 PORT=${1:-5300}
@@ -72,6 +72,39 @@ done
 for q in "x.wild.nsec3.test A" "secure.nsec3.test DS" "nsec3.test NSEC3PARAM"; do
     out=$(delv -p "$PORT" @127.0.0.1 -a "$A3" +root=nsec3.test $q 2>&1)
     check "s3 delv $q" "$out" '^; fully validated'
+done
+
+# Step 4: online-signed variants (docs/VARIANTS.md). Same zone content in each.
+out=$($D +dnssec +norec nope.minnsec.test A)
+check "s4 minnsec: NXDOMAIN, 2 NSEC + sigs"  "$out" 'AUTHORITY: 6,'
+check "s4 minnsec: cover next is nope\\000"  "$out" 'NSEC[[:space:]]+nope\\000\.minnsec\.test\. RRSIG NSEC'
+out=$($D +dnssec +norec c.minnsec3.test A)
+check "s4 white lies: NXDOMAIN, 3 NSEC3"     "$(grep -c 'IN[[:space:]]NSEC3[[:space:]]' <<<"$out")" '^3$'
+out=$($D +dnssec +norec nope.cdoe-nsec.test A)
+check "s4 compact: NOERROR for nonexistent" "$out" 'status: NOERROR'
+check "s4 compact: NXNAME bitmap"           "$out" 'NSEC[[:space:]]+\\000\.nope\.cdoe-nsec\.test\. RRSIG NSEC (TYPE128|NXNAME)'
+out=$($D +dnssec +norec +coflag nope.cdoe-nsec.test A)
+check "s4 compact: CO restores NXDOMAIN"    "$out" 'status: NXDOMAIN'
+check "s4 compact: CO echoed"               "$out" 'flags: do co;'
+out=$($D +dnssec +norec nope.cdoe-nsec.test TYPE128)
+check "s4 NXNAME query: FORMERR"            "$out" 'status: FORMERR'
+out=$($D +dnssec +norec nope.cdoe-nsec3.test A)
+check "s4 compact NSEC3: one NSEC3, NXNAME" "$out" 'NSEC3 1 0 0 - [0-9A-V]+ (TYPE128|NXNAME)$'
+
+# delv on every variant (a DS query at the apex is left out: it needs the
+# parent zone, which an island trust anchor cannot provide).
+for z in minnsec.test minnsec3.test cdoe-nsec.test cdoe-nsec3.test; do
+    for q in "nope A" "zzz A" "c A" "foo.bar.ent A" "www AAAA" "ent A" "wild A" \
+             "x.wild TXT" "a.b.wild TXT" "insecure DS"; do
+        set -- $q
+        out=$(delv -p "$PORT" @127.0.0.1 -a "zones/$z.anchor" +root=$z "$1.$z" "$2" 2>&1)
+        check "s4 delv $z $q" "$out" '^; negative response, fully validated'
+    done
+    for q in "www A" "x.wild A" "deep.er.wild A" "secure DS"; do
+        set -- $q
+        out=$(delv -p "$PORT" @127.0.0.1 -a "zones/$z.anchor" +root=$z "$1.$z" "$2" 2>&1)
+        check "s4 delv $z $q" "$out" '^; fully validated'
+    done
 done
 
 exit $fail

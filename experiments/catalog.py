@@ -7,7 +7,9 @@ cannot drift. Entries with run=None are planned and need responder changes.
 
 IDs: Nxx run against nsec.test (vanilla NSEC); N3-xx against nsec3.test
 (vanilla NSEC3, same zone content), as counterparts of the Nxx with the same
-number. NSEC3 "gaps" are hash intervals, so same-gap names are found by
+number. Online variants (same zone content, docs/VARIANTS.md): MN-xx
+minnsec.test (minimal NSEC), WL-xx minnsec3.test (NSEC3 white lies), CN-xx
+cdoe-nsec.test (compact NSEC), C3-xx cdoe-nsec3.test (compact NSEC3). NSEC3 "gaps" are hash intervals, so same-gap names are found by
 hashing candidates against the zone's real chain (nsec3_same_gap).
 
 Gaps in nsec.test used below (canonical order, zones/nsec.test.zone):
@@ -311,6 +313,161 @@ def n3_06(ctx):
     ctx.probe(f"{l1}.wild.nsec3.test.")
     b = ctx.probe(f"{l2}.wild.nsec3.test.")
     return synth_outcome(b, False) + (f"rcode {b.rcode}, AD {b.ad}, answers {[r['type'] for r in b.answer]}",)
+
+
+# --- online variants (docs/VARIANTS.md) -------------------------------------
+
+RFC4470 = "RFC 4470"
+RFC9824 = "RFC 9824"
+
+
+def rcode_ad(p):
+    return f"rcode {p.rcode}, AD {p.ad}" + (", CO" if "CO" in p.flags else "")
+
+
+@experiment(
+    id="MN-01", title="Minimal NSEC: second name beside a cached NXDOMAIN (counterpart of N01)",
+    question="After a validated minimal-NSEC NXDOMAIN for m<tag>a, is m<tag>b (adjacent, but outside the one-name span) answered without the responder?",
+    method="flush; m<tag>a.minnsec.test A (prime); m<tag>b.minnsec.test A.",
+    expected="Upstream: the cover spans only m<tag>a's subtree, which defeats ANC by design.",
+    sources=f"{RFC4470} §1; {RFC8198} §5.1",
+)
+def mn_01(ctx):
+    ctx.probe(ctx.label("m") + "a.minnsec.test.")
+    b = ctx.probe(ctx.label("m") + "b.minnsec.test.")
+    return synth_outcome(b, False) + (rcode_ad(b),)
+
+
+@experiment(
+    id="MN-02", title="Minimal NSEC: name below a cached NXDOMAIN (counterpart of N05)",
+    question="Is sub.m<tag>a answered from the cached cover for m<tag>a? The cover predecessor(m<tag>a) -> m<tag>a\\000 spans m<tag>a's whole subtree (decision D14).",
+    method="flush; m<tag>a.minnsec.test A (prime); sub.m<tag>a.minnsec.test A.",
+    expected="Synthesized (the cached cover and wildcard cover prove it). Depends on D14; with cover_next='child' the span would not reach sub.m<tag>a.",
+    sources=f"{RFC8198} §5.1; {RFC4470} erratum 6734; docs/VARIANTS.md D14",
+)
+def mn_02(ctx):
+    base = ctx.label("m") + "a.minnsec.test."
+    ctx.probe(base)
+    b = ctx.probe("sub." + base)
+    return synth_outcome(b, True) + (rcode_ad(b),)
+
+
+@experiment(
+    id="MN-03", title="Minimal NSEC: NODATA, other type at an existing name (counterpart of N03)",
+    question="After NODATA for www AAAA (online NSEC at www with the full bitmap), is www MX answered without the responder?",
+    method="flush; www.minnsec.test AAAA (prime); www.minnsec.test MX.",
+    expected="Synthesized: the NSEC at www lists every type, so it proves MX absent.",
+    sources=f"{RFC8198} §5.1; {RFC4470} §3",
+)
+def mn_03(ctx):
+    ctx.probe("www.minnsec.test.", "AAAA")
+    b = ctx.probe("www.minnsec.test.", "MX")
+    return synth_outcome(b, True) + (rcode_ad(b),)
+
+
+@experiment(
+    id="WL-01", title="NSEC3 white lies: second name (counterpart of N3-01)",
+    question="After a white-lies NXDOMAIN, is a second nonexistent name answered without the responder?",
+    method="flush; r<tag>a.minnsec3.test A (prime); r<tag>b.minnsec3.test A.",
+    expected="Upstream: BIND does no NSEC3 synthesis, and the covers span only hash±1.",
+    sources=f"{BIND_ARM}; RFC 7129 App. B",
+)
+def wl_01(ctx):
+    ctx.probe(ctx.label("r") + "a.minnsec3.test.")
+    b = ctx.probe(ctx.label("r") + "b.minnsec3.test.")
+    return synth_outcome(b, False) + (rcode_ad(b),)
+
+
+@experiment(
+    id="CN-01", title="Compact NSEC: rcode the client sees for a nonexistent name",
+    question="What rcode and AD does a client without CO get from BIND for a compact-denied name?",
+    method="flush; nx<tag>.cdoe-nsec.test A (DO=1, CO=0).",
+    expected="NOERROR with AD: RFC 9824 §5.1 says resolvers reset to NOERROR for queriers without CO; BIND 9.20 has no CO support anyway (FINDINGS E1).",
+    sources=f"{RFC9824} §3.1, §5.1",
+)
+def cn_01(ctx):
+    p = ctx.probe(ctx.label("nx") + ".cdoe-nsec.test.")
+    return p.rcode, p.rcode == "NOERROR" and p.ad, rcode_ad(p) + f"; upstream {p.upstream}"
+
+
+@experiment(
+    id="CN-02", title="Compact NSEC: client sets CO",
+    question="Does BIND restore NXDOMAIN for a client that sets CO, and does it send CO upstream?",
+    method="flush; nx<tag>.cdoe-nsec.test A with CO=1; check the response and BIND's upstream queries.",
+    expected="No: NOERROR without CO and no CO upstream, since BIND's compact-denial support is dig-only. A CO-aware resolver would return NXDOMAIN with CO (RFC 9824 §5.1).",
+    sources=f"{RFC9824} §5.1; FINDINGS E1",
+)
+def cn_02(ctx):
+    p = ctx.probe(ctx.label("nx") + ".cdoe-nsec.test.", co=True)
+    co_up = any(u.endswith(" CO") for u in p.upstream)
+    ok = p.rcode == "NOERROR" and "CO" not in p.flags and not co_up
+    return p.rcode + (" +CO" if "CO" in p.flags else ""), ok, rcode_ad(p) + f"; CO sent upstream: {co_up}"
+
+
+@experiment(
+    id="CN-03", title="Compact NSEC: same name again is cached",
+    question="Is a repeated query for a compact-denied name answered from the (NODATA) negative cache?",
+    method="flush; nx<tag>.cdoe-nsec.test A twice.",
+    expected="Second query from cache (no upstream).",
+    sources=f"{RFC9824} §3.1; RFC 2308",
+)
+def cn_03(ctx):
+    name = ctx.label("nx") + ".cdoe-nsec.test."
+    ctx.probe(name)
+    b = ctx.probe(name)
+    return synth_outcome(b, True) + (rcode_ad(b),)
+
+
+@experiment(
+    id="CN-04", title="Compact NSEC: second name (counterpart of N01)",
+    question="After a compact denial for m<tag>a, is m<tag>b answered without the responder?",
+    method="flush; m<tag>a.cdoe-nsec.test A (prime); m<tag>b.cdoe-nsec.test A.",
+    expected="Upstream: each NSEC spans only its owner (RFC 9824 §6: RFC 8198 synthesis not supported).",
+    sources=f"{RFC9824} §6",
+)
+def cn_04(ctx):
+    ctx.probe(ctx.label("m") + "a.cdoe-nsec.test.")
+    b = ctx.probe(ctx.label("m") + "b.cdoe-nsec.test.")
+    return synth_outcome(b, False) + (rcode_ad(b),)
+
+
+@experiment(
+    id="CN-05", title="Compact NSEC: name below a compact-denied name (counterpart of N05)",
+    question="After a compact denial for m<tag>a (an NSEC saying m<tag>a 'exists' with only NXNAME), is sub.m<tag>a answered without the responder?",
+    method="flush; m<tag>a.cdoe-nsec.test A (prime); sub.m<tag>a.cdoe-nsec.test A.",
+    expected="Upstream: the NSEC proves nothing about names below its owner, and RFC 8020 NXDOMAIN cuts do not apply (no NXDOMAIN).",
+    sources=f"{RFC9824} §6; RFC 8020",
+)
+def cn_05(ctx):
+    base = ctx.label("m") + "a.cdoe-nsec.test."
+    ctx.probe(base)
+    b = ctx.probe("sub." + base)
+    return synth_outcome(b, False) + (rcode_ad(b),)
+
+
+@experiment(
+    id="C3-01", title="Compact NSEC3: rcode the client sees for a nonexistent name",
+    question="What rcode and AD does a client get from BIND for a compact-denied NSEC3 name?",
+    method="flush; nx<tag>.cdoe-nsec3.test A.",
+    expected="NOERROR with AD (as CN-01).",
+    sources=f"{RFC9824} §4, §5.1",
+)
+def c3_01(ctx):
+    p = ctx.probe(ctx.label("nx") + ".cdoe-nsec3.test.")
+    return p.rcode, p.rcode == "NOERROR" and p.ad, rcode_ad(p)
+
+
+@experiment(
+    id="C3-02", title="Compact NSEC3: second name",
+    question="After a compact NSEC3 denial, is a second nonexistent name answered without the responder?",
+    method="flush; m<tag>a.cdoe-nsec3.test A (prime); m<tag>b.cdoe-nsec3.test A.",
+    expected="Upstream (no NSEC3 synthesis in BIND; single-hash spans).",
+    sources=f"{BIND_ARM}; {RFC9824} §6",
+)
+def c3_02(ctx):
+    ctx.probe(ctx.label("m") + "a.cdoe-nsec3.test.")
+    b = ctx.probe(ctx.label("m") + "b.cdoe-nsec3.test.")
+    return synth_outcome(b, False) + (rcode_ad(b),)
 
 
 # --- planned: need deliberately odd responder output (responder knobs) ----

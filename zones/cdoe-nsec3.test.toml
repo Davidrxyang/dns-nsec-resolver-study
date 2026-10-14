@@ -1,0 +1,5 @@
+# Per-zone config. denial selects the denial-of-existence variant.
+# See docs/VARIANTS.md for the rules and implementation decisions.
+denial = "compact-nsec3"
+iterations = 0
+salt = ""

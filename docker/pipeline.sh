@@ -63,11 +63,14 @@ checks() {
         echo "OBS   5 no ANC: BIND asked the responder for $b"
     fi
 
-    # NSEC3 zone: the same path for a second variant ("c" gives the full
-    # three-record closest encloser proof).
-    out=$($DC exec -T client dig @172.30.0.20 +dnssec "c${tag}.nsec3.test." A)
-    check "5b NSEC3 zone via BIND: NXDOMAIN"             "$out" 'status: NXDOMAIN'
-    check "5b NSEC3 zone via BIND: validated (ad)"       "$out" 'flags: qr rd ra ad;'
+    # Every variant zone through BIND: a validated answer for a nonexistent
+    # name. Compact denial answers NOERROR (RFC 9824), the others NXDOMAIN.
+    for z in nsec3.test minnsec.test minnsec3.test cdoe-nsec.test cdoe-nsec3.test; do
+        case $z in cdoe-*) want=NOERROR ;; *) want=NXDOMAIN ;; esac
+        out=$($DC exec -T client dig @172.30.0.20 +dnssec "c${tag}.$z." A)
+        check "5b $z via BIND: $want"                    "$out" "status: $want"
+        check "5b $z via BIND: validated (ad)"           "$out" 'flags: qr rd ra ad;'
+    done
 
     # 6. Negative control: with the responder stopped, BIND must fail rather
     # than answer. Flush first and use another gap (ns1 < p... < secure);

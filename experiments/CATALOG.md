@@ -20,6 +20,17 @@ Zone: `nsec.test` (vanilla NSEC). Resolver: BIND in the local Docker pipeline. R
 | N3-01 | runnable | NSEC3: NXDOMAIN, same hash gap (counterpart of N01) | Upstream: BIND synthesizes from NSEC only; NSEC3 synthesis is 'planned for the future'. RFC 8198 §5.2 would allow it. | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2 |
 | N3-03 | runnable | NSEC3: NODATA, other type at an existing name (counterpart of N03) | Upstream (no NSEC3 synthesis in BIND). | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2 |
 | N3-06 | runnable | NSEC3: positive wildcard (counterpart of N06) | Upstream (no NSEC3-based wildcard synthesis in BIND). RFC 8198 §5.3 would allow it. | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.3 |
+| MN-01 | runnable | Minimal NSEC: second name beside a cached NXDOMAIN (counterpart of N01) | Upstream: the cover spans only m<tag>a's subtree, which defeats ANC by design. | RFC 4470 §1; RFC 8198 §5.1 |
+| MN-02 | runnable | Minimal NSEC: name below a cached NXDOMAIN (counterpart of N05) | Synthesized (the cached cover and wildcard cover prove it). Depends on D14; with cover_next='child' the span would not reach sub.m<tag>a. | RFC 8198 §5.1; RFC 4470 erratum 6734; docs/VARIANTS.md D14 |
+| MN-03 | runnable | Minimal NSEC: NODATA, other type at an existing name (counterpart of N03) | Synthesized: the NSEC at www lists every type, so it proves MX absent. | RFC 8198 §5.1; RFC 4470 §3 |
+| WL-01 | runnable | NSEC3 white lies: second name (counterpart of N3-01) | Upstream: BIND does no NSEC3 synthesis, and the covers span only hash±1. | BIND ARM synth-from-dnssec (NSEC only); RFC 7129 App. B |
+| CN-01 | runnable | Compact NSEC: rcode the client sees for a nonexistent name | NOERROR with AD: RFC 9824 §5.1 says resolvers reset to NOERROR for queriers without CO; BIND 9.20 has no CO support anyway (FINDINGS E1). | RFC 9824 §3.1, §5.1 |
+| CN-02 | runnable | Compact NSEC: client sets CO | No: NOERROR without CO and no CO upstream, since BIND's compact-denial support is dig-only. A CO-aware resolver would return NXDOMAIN with CO (RFC 9824 §5.1). | RFC 9824 §5.1; FINDINGS E1 |
+| CN-03 | runnable | Compact NSEC: same name again is cached | Second query from cache (no upstream). | RFC 9824 §3.1; RFC 2308 |
+| CN-04 | runnable | Compact NSEC: second name (counterpart of N01) | Upstream: each NSEC spans only its owner (RFC 9824 §6: RFC 8198 synthesis not supported). | RFC 9824 §6 |
+| CN-05 | runnable | Compact NSEC: name below a compact-denied name (counterpart of N05) | Upstream: the NSEC proves nothing about names below its owner, and RFC 8020 NXDOMAIN cuts do not apply (no NXDOMAIN). | RFC 9824 §6; RFC 8020 |
+| C3-01 | runnable | Compact NSEC3: rcode the client sees for a nonexistent name | NOERROR with AD (as CN-01). | RFC 9824 §4, §5.1 |
+| C3-02 | runnable | Compact NSEC3: second name | Upstream (no NSEC3 synthesis in BIND; single-hash spans). | BIND ARM synth-from-dnssec (NSEC only); RFC 9824 §6 |
 | P01 | planned | NSEC TTL above SOA MINIMUM | Capped at the negative TTL. | RFC 8198 §5.4; RFC 9077 §3.4 |
 | P02 | planned | NSEC TTL above 3 hours | Capped (RECOMMENDED), or at max-ncache-ttl. | RFC 8198 §5.4; BIND ARM max-ncache-ttl |
 | P03 | planned | Broken proof is not cached or reused | SERVFAIL; no synthesis from the incomplete proof. | RFC 4035 §5.4; BIND CVE-2026-11721 fix notes |
@@ -130,6 +141,83 @@ Zone: `nsec.test` (vanilla NSEC). Resolver: BIND in the local Docker pipeline. R
 - **Method:** flush; two labels whose <label>.wild.nsec3.test hashes share one NSEC3 gap; query both, A.
 - **Expected:** Upstream (no NSEC3-based wildcard synthesis in BIND). RFC 8198 §5.3 would allow it.
 - **Sources:** BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.3
+
+## MN-01: Minimal NSEC: second name beside a cached NXDOMAIN (counterpart of N01)
+
+- **Question:** After a validated minimal-NSEC NXDOMAIN for m<tag>a, is m<tag>b (adjacent, but outside the one-name span) answered without the responder?
+- **Method:** flush; m<tag>a.minnsec.test A (prime); m<tag>b.minnsec.test A.
+- **Expected:** Upstream: the cover spans only m<tag>a's subtree, which defeats ANC by design.
+- **Sources:** RFC 4470 §1; RFC 8198 §5.1
+
+## MN-02: Minimal NSEC: name below a cached NXDOMAIN (counterpart of N05)
+
+- **Question:** Is sub.m<tag>a answered from the cached cover for m<tag>a? The cover predecessor(m<tag>a) -> m<tag>a\000 spans m<tag>a's whole subtree (decision D14).
+- **Method:** flush; m<tag>a.minnsec.test A (prime); sub.m<tag>a.minnsec.test A.
+- **Expected:** Synthesized (the cached cover and wildcard cover prove it). Depends on D14; with cover_next='child' the span would not reach sub.m<tag>a.
+- **Sources:** RFC 8198 §5.1; RFC 4470 erratum 6734; docs/VARIANTS.md D14
+
+## MN-03: Minimal NSEC: NODATA, other type at an existing name (counterpart of N03)
+
+- **Question:** After NODATA for www AAAA (online NSEC at www with the full bitmap), is www MX answered without the responder?
+- **Method:** flush; www.minnsec.test AAAA (prime); www.minnsec.test MX.
+- **Expected:** Synthesized: the NSEC at www lists every type, so it proves MX absent.
+- **Sources:** RFC 8198 §5.1; RFC 4470 §3
+
+## WL-01: NSEC3 white lies: second name (counterpart of N3-01)
+
+- **Question:** After a white-lies NXDOMAIN, is a second nonexistent name answered without the responder?
+- **Method:** flush; r<tag>a.minnsec3.test A (prime); r<tag>b.minnsec3.test A.
+- **Expected:** Upstream: BIND does no NSEC3 synthesis, and the covers span only hash±1.
+- **Sources:** BIND ARM synth-from-dnssec (NSEC only); RFC 7129 App. B
+
+## CN-01: Compact NSEC: rcode the client sees for a nonexistent name
+
+- **Question:** What rcode and AD does a client without CO get from BIND for a compact-denied name?
+- **Method:** flush; nx<tag>.cdoe-nsec.test A (DO=1, CO=0).
+- **Expected:** NOERROR with AD: RFC 9824 §5.1 says resolvers reset to NOERROR for queriers without CO; BIND 9.20 has no CO support anyway (FINDINGS E1).
+- **Sources:** RFC 9824 §3.1, §5.1
+
+## CN-02: Compact NSEC: client sets CO
+
+- **Question:** Does BIND restore NXDOMAIN for a client that sets CO, and does it send CO upstream?
+- **Method:** flush; nx<tag>.cdoe-nsec.test A with CO=1; check the response and BIND's upstream queries.
+- **Expected:** No: NOERROR without CO and no CO upstream, since BIND's compact-denial support is dig-only. A CO-aware resolver would return NXDOMAIN with CO (RFC 9824 §5.1).
+- **Sources:** RFC 9824 §5.1; FINDINGS E1
+
+## CN-03: Compact NSEC: same name again is cached
+
+- **Question:** Is a repeated query for a compact-denied name answered from the (NODATA) negative cache?
+- **Method:** flush; nx<tag>.cdoe-nsec.test A twice.
+- **Expected:** Second query from cache (no upstream).
+- **Sources:** RFC 9824 §3.1; RFC 2308
+
+## CN-04: Compact NSEC: second name (counterpart of N01)
+
+- **Question:** After a compact denial for m<tag>a, is m<tag>b answered without the responder?
+- **Method:** flush; m<tag>a.cdoe-nsec.test A (prime); m<tag>b.cdoe-nsec.test A.
+- **Expected:** Upstream: each NSEC spans only its owner (RFC 9824 §6: RFC 8198 synthesis not supported).
+- **Sources:** RFC 9824 §6
+
+## CN-05: Compact NSEC: name below a compact-denied name (counterpart of N05)
+
+- **Question:** After a compact denial for m<tag>a (an NSEC saying m<tag>a 'exists' with only NXNAME), is sub.m<tag>a answered without the responder?
+- **Method:** flush; m<tag>a.cdoe-nsec.test A (prime); sub.m<tag>a.cdoe-nsec.test A.
+- **Expected:** Upstream: the NSEC proves nothing about names below its owner, and RFC 8020 NXDOMAIN cuts do not apply (no NXDOMAIN).
+- **Sources:** RFC 9824 §6; RFC 8020
+
+## C3-01: Compact NSEC3: rcode the client sees for a nonexistent name
+
+- **Question:** What rcode and AD does a client get from BIND for a compact-denied NSEC3 name?
+- **Method:** flush; nx<tag>.cdoe-nsec3.test A.
+- **Expected:** NOERROR with AD (as CN-01).
+- **Sources:** RFC 9824 §4, §5.1
+
+## C3-02: Compact NSEC3: second name
+
+- **Question:** After a compact NSEC3 denial, is a second nonexistent name answered without the responder?
+- **Method:** flush; m<tag>a.cdoe-nsec3.test A (prime); m<tag>b.cdoe-nsec3.test A.
+- **Expected:** Upstream (no NSEC3 synthesis in BIND; single-hash spans).
+- **Sources:** BIND ARM synth-from-dnssec (NSEC only); RFC 9824 §6
 
 ## P01: NSEC TTL above SOA MINIMUM
 

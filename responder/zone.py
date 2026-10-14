@@ -22,7 +22,6 @@ from .denial import NsecDenial
 
 ALGORITHM = dns.dnssec.Algorithm.ECDSAP256SHA256  # 13
 DNSKEY_FLAGS = 257  # ZONE | SEP: single key acting as KSK and ZSK
-DNSKEY_TTL = 3600
 # Inception in the past and expiration far ahead so clock skew cannot interfere.
 INCEPTION_SKEW = 3600
 SIG_LIFETIME = 30 * 86400
@@ -54,9 +53,10 @@ class SignedZone:
         self.key_tag = dns.dnssec.key_id(self.dnskey)
 
         apex = self.zone.find_node(self.origin)
-        apex.replace_rdataset(dns.rdataset.from_rdata(DNSKEY_TTL, self.dnskey))
-
         soa = apex.get_rdataset(dns.rdataclass.IN, dns.rdatatype.SOA)
+        # DNSKEY at the zone's TTL, as dnssec-signzone does for a key without one.
+        apex.replace_rdataset(dns.rdataset.from_rdata(soa.ttl, self.dnskey))
+
         # RFC 2308 / RFC 9077: negative TTL = min(SOA TTL, SOA MINIMUM).
         self.neg_ttl = min(soa.ttl, soa[0].minimum)
 
@@ -131,6 +131,9 @@ class SignedZone:
         now = int(time.time())
         inception = now - INCEPTION_SKEW
         expiration = now + SIG_LIFETIME
+        # Online-signed records reuse this window (docs/VARIANTS.md D3).
+        self.sig_window = (inception, expiration)
+        self._online_sigs = {}
         rrsets = [(owner, rds) for owner, node in self.zone.nodes.items() for rds in node.rdatasets
                   if rds.rdtype != dns.rdatatype.RRSIG and self.is_authoritative(owner, rds.rdtype)]
         rrsets += [(owner, rds) for (owner, _), rds in self.extra.items()]
@@ -146,6 +149,24 @@ class SignedZone:
                 expiration=expiration,
             )
             self.rrsigs[(owner, rds.rdtype)] = dns.rrset.from_rdata(owner, rds.ttl, sig)
+
+    def sign_online(self, rrset):
+        """Sign a record built per response (online signing variants).
+
+        ECDSA signing here is deterministic (RFC 6979) and the window is fixed,
+        so identical records get identical signatures and are cached.
+        """
+        key = (rrset.name.canonicalize(), rrset.rdtype, rrset.ttl,
+               tuple(sorted(rd.to_digestable(self.origin) for rd in rrset)))
+        sig = self._online_sigs.get(key)
+        if sig is None:
+            inception, expiration = self.sig_window
+            rd = dns.dnssec.sign(rrset, self.key, self.origin, self.dnskey,
+                                 inception=inception, expiration=expiration)
+            sig = dns.rrset.from_rdata(rrset.name, rrset.ttl, rd)
+            if len(self._online_sigs) < 100_000:
+                self._online_sigs[key] = sig
+        return sig
 
     def get(self, name, rdtype, owner=None, ttl=None):
         """Return (rrset, rrsig_rrset or None) for an existing RRset, else None.

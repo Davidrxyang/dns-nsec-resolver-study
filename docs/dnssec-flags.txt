@@ -1,0 +1,109 @@
+DNSSEC FLAGS AND FIELDS - QUICK REFERENCE
+(bit 0 = most significant bit, as RFCs number them)
+
+1. DNS MESSAGE HEADER FLAGS (RFC 1035, RFC 4035)
+----------------------------------------------------------------------------
+Flag    Bit    Set by                 Meaning
+QR      0      responder              0 = query, 1 = response
+Opcode  1-4    client                 0 QUERY, 2 STATUS, 4 NOTIFY, 5 UPDATE
+AA      5      authoritative server   Authoritative Answer
+TC      6      responder              TrunCated: retry over TCP
+RD      7      client                 Recursion Desired
+RA      8      resolver               Recursion Available
+Z       9      -                      reserved, must be 0
+AD      10     validating resolver    Authentic Data: validated as secure
+CD      11     client                 Checking Disabled: "don't validate"
+RCODE   12-15  responder              response code (section 7)
+
+2. EDNS(0) OPT RECORD FLAGS (RFC 6891, RFC 3225, RFC 9824)
+----------------------------------------------------------------------------
+Flag    Mask     Meaning
+DO      0x8000   DNSSEC OK: include RRSIG/NSEC/NSEC3/DNSKEY records
+CO      0x4000   Compact answers OK (RFC 9824): client accepts compact
+                 denial (NXNAME) and wants NXDOMAIN restored
+Z       rest     reserved, must be 0
+Other OPT fields: version (0; else BADVERS), UDP payload size (e.g. 1232),
+extended RCODE (upper 8 bits of the rcode).
+
+3. DNSKEY FLAGS FIELD (RFC 4034, RFC 5011)
+----------------------------------------------------------------------------
+Flag    Bit   Value   Meaning
+ZONE    7     256     zone key; must be set for DNSSEC signing
+REVOKE  8     128     key revoked (RFC 5011 rollover)
+SEP     15    1       Secure Entry Point: marks a KSK (hint only)
+Common values: 256 = ZSK, 257 = KSK or CSK (ZONE+SEP), 385 = revoked KSK
+Protocol field: always 3.
+
+4. ALGORITHM NUMBERS (DNSKEY, RRSIG, DS)
+----------------------------------------------------------------------------
+ 5  RSASHA1              deprecated
+ 7  RSASHA1-NSEC3-SHA1   deprecated
+ 8  RSASHA256            common (root zone)
+10  RSASHA512
+13  ECDSAP256SHA256      common (.com, Cloudflare, this project)
+14  ECDSAP384SHA384
+15  ED25519
+16  ED448
+Retired or rare: 1 RSAMD5, 3 DSA, 6 DSA-NSEC3-SHA1, 12 ECC-GOST
+DS digest types: 1 SHA-1 (deprecated), 2 SHA-256, 3 GOST R 34.11-94,
+                 4 SHA-384
+
+5. NSEC3 / NSEC3PARAM FIELDS (RFC 5155, RFC 9276)
+----------------------------------------------------------------------------
+Hash algorithm      1 = SHA-1 (the only one)
+Flags (NSEC3)       bit 7 = Opt-Out (value 1): span may contain unsigned
+                    delegations; flags other than 0/1 -> record ignored
+Flags (NSEC3PARAM)  must be 0
+Iterations          extra hash rounds; RFC 9276 says 0
+Salt                "-" = none; RFC 9276 says none
+
+6. DNSSEC RECORD TYPES
+----------------------------------------------------------------------------
+DS 43   RRSIG 46   NSEC 47   DNSKEY 48   NSEC3 50   NSEC3PARAM 51
+CDS 59   CDNSKEY 60   NXNAME 128 (compact denial, RFC 9824)
+
+RRSIG fields: type covered, algorithm, labels (owner labels not counting
+a leading "*"; fewer than the owner's labels = wildcard expansion),
+original TTL, expiration, inception, key tag, signer name, signature.
+
+7. RESPONSE CODES (RCODE)
+----------------------------------------------------------------------------
+ 0  NOERROR    answer, or NODATA (empty answer)
+ 1  FORMERR    malformed query
+ 2  SERVFAIL   resolver could not resolve; DNSSEC bogus
+ 3  NXDOMAIN   name does not exist
+ 4  NOTIMP     not implemented
+ 5  REFUSED    policy (not our zone, AXFR)
+16  BADVERS    unsupported EDNS version
+
+8. EXTENDED DNS ERRORS, DNSSEC-RELATED (RFC 8914, carried in OPT)
+----------------------------------------------------------------------------
+ 1  Unsupported DNSKEY Algorithm     8  Signature Not Yet Valid
+ 2  Unsupported DS Digest Type       9  DNSKEY Missing
+ 5  DNSSEC Indeterminate            10  RRSIGs Missing
+ 6  DNSSEC Bogus                    11  No Zone Key Bit Set
+ 7  Signature Expired               12  NSEC Missing
+                                    27  Unsupported NSEC3 Iterations Value
+(Codes written from memory: check RFC 8914 / the IANA registry.)
+
+9. VALIDATION OUTCOMES
+----------------------------------------------------------------------------
+Secure         chain from a trust anchor; AD set
+Insecure       provably unsigned; no AD
+Bogus          validation failed -> SERVFAIL
+Indeterminate  no trust anchor covers the name
+
+10. TOOL CHEAT SHEET
+----------------------------------------------------------------------------
+dig options                     dig output
++dnssec   sets DO               flags: qr aa         header flags (sec. 1)
++norec    clears RD             EDNS: ... flags: do  OPT flags (sec. 2)
++cd       sets CD               udp: 1232            advertised UDP size
++adflag   sets AD in query      status:              RCODE (sec. 7)
++coflag   sets CO (9.20.11+)    TYPE128              NXNAME (older dig)
++tcp      use TCP
+
+BIND queries.log flags, e.g. "+E(0)DK":
+  +  RD set     E(0)  EDNS version 0     D  DO     C  CD
+  K  cookie     T     TCP                S  signed (TSIG)
+(Letters written from memory: check the BIND ARM.)

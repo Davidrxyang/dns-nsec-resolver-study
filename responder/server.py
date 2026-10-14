@@ -11,6 +11,7 @@ import struct
 import threading
 import time
 
+import dns.edns
 import dns.exception
 import dns.flags
 import dns.message
@@ -72,13 +73,22 @@ class Responder:
             response.flags &= ~dns.flags.AA
             response.set_rcode(dns.rcode.REFUSED)
             return response
+        if q.rdtype == dns.rdatatype.NXNAME:
+            # RFC 9824 §3.5: NXNAME is a meta type; queries for it MUST get
+            # FORMERR, optionally with EDE 30. Applied to every zone (D13).
+            response.flags &= ~dns.flags.AA
+            response.set_rcode(dns.rcode.FORMERR)
+            if query.edns >= 0:
+                response.use_edns(0, response.ednsflags, OUR_UDP_PAYLOAD,
+                                  options=[dns.edns.EDEOption(dns.edns.EDECode.INVALID_QUERY_TYPE)])
+            return response
         if q.rdtype == dns.rdatatype.ANY:
             # Not needed for the study; RFC 8482 minimal ANY could go here.
             response.flags &= ~dns.flags.AA
             response.set_rcode(dns.rcode.NOTIMP)
             return response
 
-        answer(response, zone, q.name, q.rdtype, do)
+        answer(response, zone, q.name, q.rdtype, do, co=bool(query.ednsflags & dns.flags.CO))
         return response
 
     def handle(self, wire: bytes, transport: str, src) -> bytes | None:
@@ -123,6 +133,7 @@ class Responder:
             "edns": query.edns,
             "edns_payload": query.payload if query.edns >= 0 else None,
             "do": bool(query.ednsflags & dns.flags.DO),
+            "co": bool(query.ednsflags & dns.flags.CO),
             "rcode": dns.rcode.to_text(response.rcode()),
             "tc": bool(response.flags & dns.flags.TC),
             "resp_size": len(out),
