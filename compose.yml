@@ -1,0 +1,53 @@
+# Local resolver pipeline: client -> BIND -> responder on a private bridge.
+# Start with docker/pipeline.sh up (prepares log dirs), not plain `docker compose up`.
+
+x-bind-image: &bind-image
+  # BIND 9.20.29 (pulled 2026-10-13); ISC only publishes moving branch tags.
+  internetsystemsconsortium/bind9@sha256:071465f88068854d0ceadd9b985fb1acae4071e80754e545cd811fde57541ad0
+
+networks:
+  lab:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+services:
+  responder:
+    build:
+      context: .
+      dockerfile: docker/responder.Dockerfile
+    # Host uid so files written to the mounts stay yours. Docker lets
+    # unprivileged users bind port 53 inside containers.
+    user: "${UID:-1000}:${GID:-1000}"
+    init: true
+    volumes:
+      - ./zones:/app/zones
+      - ./logs:/app/logs
+    networks:
+      lab:
+        ipv4_address: 172.30.0.10
+
+  bind:
+    image: *bind-image
+    depends_on: [responder]
+    # Create the rndc key (used by `rndc` inside this container), then run
+    # named exactly as the image's default entrypoint/cmd would.
+    entrypoint:
+      - sh
+      - -c
+      - rndc-confgen -a -u bind && exec /usr/sbin/named -u bind -f -c /etc/bind/named.conf
+    volumes:
+      - ./docker/bind/named.conf:/etc/bind/named.conf:ro
+      - ./zones/nsec.test.anchor:/etc/bind/nsec.test.anchor:ro
+      - ./logs/bind:/var/log/bind
+    networks:
+      lab:
+        ipv4_address: 172.30.0.20
+
+  client:
+    image: *bind-image   # only for its dig
+    init: true
+    entrypoint: ["tail", "-f", "/dev/null"]
+    networks:
+      lab:
+        ipv4_address: 172.30.0.30

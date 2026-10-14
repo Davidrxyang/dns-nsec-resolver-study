@@ -33,3 +33,15 @@ delv -p 5300 @127.0.0.1 -a zones/nsec.test.anchor +root=nsec.test nope.nsec.test
 
 `delv` should print `; fully validated` (or `; negative response, fully validated`).
 Refused queries such as AXFR show up only in `logs/queries.jsonl`.
+
+## Local resolver pipeline (Docker: client -> BIND 9.20.29 -> responder)
+
+```bash
+docker/pipeline.sh up            # build and start; BIND at 172.30.0.20
+docker/pipeline.sh check         # bring-up checks, incl. responder-down SERVFAIL
+docker/pipeline.sh experiments   # catalogued behavior probes; add --only N01,N08 or --slow
+docker/pipeline.sh down
+```
+
+Experiments are defined in `experiments/catalog.py` and listed in [experiments/CATALOG.md](experiments/CATALOG.md)
+(regenerate with `venv/bin/python -m experiments catalog`). Each run writes `results/<UTC time>/`.

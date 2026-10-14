@@ -274,7 +274,12 @@ nsec-responder/
 
 Steps 1 and 2 are done, the golden fixtures are saved, and the delv flags are verified. Next:
 
-1. **Local resolver pipeline (planned).** Docker Compose on the laptop: responder `172.30.0.10:53`, BIND (ISC image `internetsystemsconsortium/bind9`, 9.20.x ≥ 9.20.26 pinned by digest) `172.30.0.20:53`, client `172.30.0.30`.
+0. **Pipeline status (2026-10-14): working.** `docker/pipeline.sh up|check|experiments|down`. All 6 checks pass, including responder-down → SERVFAIL. Diagnostic experiments are catalogued in `experiments/catalog.py` (rendered to `experiments/CATALOG.md`), and results go to `results/` (gitignored). Notable diagnostic observations on BIND 9.20.29:
+   - **N08:** synthesizes even when the client sets CD=1, against RFC 8198 App. A (implementation notes; the RFC body never mentions CD).
+   - **N11:** relaxed QNAME minimisation re-sends the full query after a validated NXDOMAIN for the minimised name. This is documented ARM behaviour, but it means a deep first query costs 2 upstream queries plus DNSKEY, which must not be misread as missing ANC.
+   - N01–N07, N09, N10 and N12 behave as RFC 8198 describes: NXDOMAIN, NODATA, ENT and wildcard synthesis all happen; DO doesn't matter; synthesis stops after the 60 s TTL.
+   - Planned probes P01–P05 need responder knobs or a BIND config variant.
+1. **Local resolver pipeline (built; details below).** Docker Compose on the laptop: responder `172.30.0.10:53`, BIND (ISC image `internetsystemsconsortium/bind9`, 9.20.x ≥ 9.20.26 pinned by digest) `172.30.0.20:53`, client `172.30.0.30`.
    - Image checked 2026-10-13:
      - `internetsystemsconsortium/bind9:9.20` is **BIND 9.20.29** on Alpine 3.24. ISC publishes only branch tags (no `9.20.29` tag exists), so pin by **digest** (`docker inspect --format '{{index .RepoDigests 0}}' …`) and record it with the version. **Pinned:** `internetsystemsconsortium/bind9@sha256:071465f88068854d0ceadd9b985fb1acae4071e80754e545cd811fde57541ad0` = BIND 9.20.29 (pulled 2026-10-13).
      - Built with `--enable-dnstap`; supports ECDSAP256SHA256; includes `dig 9.20.29`, so the client can use the same image.
