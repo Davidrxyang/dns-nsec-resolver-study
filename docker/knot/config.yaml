@@ -1,0 +1,41 @@
+# Knot Resolver 6 in the local pipeline: client -> knot (172.30.0.21) -> responder (172.30.0.10).
+# Mirrors docker/bind/named.conf: same zones, same trust anchors, defaults otherwise.
+# Image: cznic/knot-resolver v6.5.0 (package 6.5.0.dev1+928fe2-cznic.1), pinned by digest in compose.yml.
+
+workers: 2                        # the image's default
+
+network:
+  listen:
+    - interface: 172.30.0.21      # the container's lab address (not 0.0.0.0, per the docs' warning)
+    - interface: 127.0.0.1
+
+# Only the lab network may query (no ports are published, but be explicit).
+views:
+  - subnets: [ 0.0.0.0/0, "::/0" ]
+    answer: refused
+  - subnets: [ 172.30.0.0/24, 127.0.0.1 ]
+    answer: allow
+
+# One zone-format file per zone, converted from zones/*.anchor by docker/pipeline.sh up.
+# read-only: no RFC 5011 updates written back.
+dnssec:
+  trust-anchors-files:
+    - { file: /etc/knot-resolver/zones/nsec.test.dnskey,       read-only: true }
+    - { file: /etc/knot-resolver/zones/nsec3.test.dnskey,      read-only: true }
+    - { file: /etc/knot-resolver/zones/minnsec.test.dnskey,    read-only: true }
+    - { file: /etc/knot-resolver/zones/minnsec3.test.dnskey,   read-only: true }
+    - { file: /etc/knot-resolver/zones/cdoe-nsec.test.dnskey,  read-only: true }
+    - { file: /etc/knot-resolver/zones/cdoe-nsec3.test.dnskey, read-only: true }
+
+# Each variant zone goes straight to the responder as an authoritative server
+# (Knot's equivalent of BIND's static-stub), validated locally.
+forward:
+  - { subtree: nsec.test,       servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
+  - { subtree: nsec3.test,      servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
+  - { subtree: minnsec.test,    servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
+  - { subtree: minnsec3.test,   servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
+  - { subtree: cdoe-nsec.test,  servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
+  - { subtree: cdoe-nsec3.test, servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
+
+logging:
+  level: info

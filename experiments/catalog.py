@@ -23,7 +23,7 @@ import functools
 import random
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -39,10 +39,12 @@ class Experiment:
     title: str
     question: str
     method: str
-    expected: str
+    expected: str               # for BIND, and for any resolver not listed in expected_by
     sources: str
     run: Callable | None = None
     slow: bool = False
+    expected_by: dict = field(default_factory=dict)   # resolver name -> its own expectation text
+    anc: bool = True            # tests aggressive negative caching (a second name from cache)
 
 
 CATALOG: list[Experiment] = []
@@ -59,11 +61,14 @@ def planned(**meta):
     CATALOG.append(Experiment(**meta))
 
 
-def synth_outcome(second, expect_synth: bool):
-    """Classify the second probe: synthesized from cache, or fetched upstream."""
+def synth_outcome(second, expect_synth):
+    """Classify the second probe: synthesized from cache, or fetched upstream.
+    expect_synth None means no expectation (observation only)."""
     if second.error:
         return f"error: {second.error}", None
     outcome = "upstream" if second.went_upstream else "synthesized"
+    if expect_synth is None:
+        return outcome, None
     return outcome, (outcome == "synthesized") == expect_synth
 
 
@@ -223,11 +228,14 @@ def n10(ctx):
     method="flush; d1.d2.m<tag>.nsec.test A; record the upstream query sequence.",
     expected="Relaxed QNAME minimisation (BIND default): NS query for m<tag>.nsec.test, then on NXDOMAIN a fallback full query for d1.d2.m<tag>, although the cached NSEC already proves it. Plus a DNSKEY fetch after the flush.",
     sources="BIND ARM qname-minimization (relaxed: falls back on NXDOMAIN); RFC 9156; RFC 8020",
+    expected_by={"knot": "Unknown (observation): Knot's minimisation strategy is not documented in the same terms.",
+                 "pdns": "Unknown (observation): qname_minimization is on by default (relaxed RFC 9156); nothing_below_nxdomain=dnssec may stop at the validated NXDOMAIN."},
+    anc=False,
 )
 def n11(ctx):
     mid = ctx.label("m") + ".nsec.test."
     b = ctx.probe("d1.d2." + mid)
-    ok = f"{mid} NS" in b.upstream and f"d1.d2.{mid} A" in b.upstream
+    ok = ctx.expect(f"{mid} NS" in b.upstream and f"d1.d2.{mid} A" in b.upstream, knot=None, pdns=None)
     return f"{len(b.upstream)} upstream", ok, "; ".join(b.upstream)
 
 
@@ -280,12 +288,13 @@ def nsec3_same_gap(suffix, count=2, prefix="r"):
     method="flush; two labels chosen so their hashes share one NSEC3 gap; <l1>.nsec3.test A (prime); <l2>.nsec3.test A.",
     expected="Upstream: BIND synthesizes from NSEC only; NSEC3 synthesis is 'planned for the future'. RFC 8198 §5.2 would allow it.",
     sources=f"{BIND_ARM}; {RFC8198} §5.2",
+    expected_by={"knot": 'Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot\'s docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.'},
 )
 def n3_01(ctx):
     l1, l2 = nsec3_same_gap("nsec3.test.")
     ctx.probe(f"{l1}.nsec3.test.")
     b = ctx.probe(f"{l2}.nsec3.test.")
-    return synth_outcome(b, False) + (f"rcode {b.rcode}, AD {b.ad}",)
+    return synth_outcome(b, ctx.expect(False, knot=None)) + (f"rcode {b.rcode}, AD {b.ad}",)
 
 
 @experiment(
@@ -294,11 +303,12 @@ def n3_01(ctx):
     method="flush; www.nsec3.test AAAA (prime); www.nsec3.test MX.",
     expected="Upstream (no NSEC3 synthesis in BIND).",
     sources=f"{BIND_ARM}; {RFC8198} §5.2",
+    expected_by={"knot": 'Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot\'s docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.'},
 )
 def n3_03(ctx):
     ctx.probe("www.nsec3.test.", "AAAA")
     b = ctx.probe("www.nsec3.test.", "MX")
-    return synth_outcome(b, False) + (f"rcode {b.rcode}, AD {b.ad}",)
+    return synth_outcome(b, ctx.expect(False, knot=None)) + (f"rcode {b.rcode}, AD {b.ad}",)
 
 
 @experiment(
@@ -307,12 +317,13 @@ def n3_03(ctx):
     method="flush; two labels whose <label>.wild.nsec3.test hashes share one NSEC3 gap; query both, A.",
     expected="Upstream (no NSEC3-based wildcard synthesis in BIND). RFC 8198 §5.3 would allow it.",
     sources=f"{BIND_ARM}; {RFC8198} §5.3",
+    expected_by={"knot": 'Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot\'s docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.'},
 )
 def n3_06(ctx):
     l1, l2 = nsec3_same_gap("wild.nsec3.test.")
     ctx.probe(f"{l1}.wild.nsec3.test.")
     b = ctx.probe(f"{l2}.wild.nsec3.test.")
-    return synth_outcome(b, False) + (f"rcode {b.rcode}, AD {b.ad}, answers {[r['type'] for r in b.answer]}",)
+    return synth_outcome(b, ctx.expect(False, knot=None)) + (f"rcode {b.rcode}, AD {b.ad}, answers {[r['type'] for r in b.answer]}",)
 
 
 # --- online variants (docs/VARIANTS.md) -------------------------------------
@@ -344,12 +355,13 @@ def mn_01(ctx):
     method="flush; m<tag>a.minnsec.test A (prime); sub.m<tag>a.minnsec.test A.",
     expected="Synthesized (the cached cover and wildcard cover prove it). Depends on D14; with cover_next='child' the span would not reach sub.m<tag>a.",
     sources=f"{RFC8198} §5.1; {RFC4470} erratum 6734; docs/VARIANTS.md D14",
+    expected_by={"knot": "Upstream: Knot's release notes (4.1.0, 2019) say aggressive caching is disabled for minimal ranges (CLAUDE.md §6); not re-verified for 6.x."},
 )
 def mn_02(ctx):
     base = ctx.label("m") + "a.minnsec.test."
     ctx.probe(base)
     b = ctx.probe("sub." + base)
-    return synth_outcome(b, True) + (rcode_ad(b),)
+    return synth_outcome(b, ctx.expect(True, knot=False)) + (rcode_ad(b),)
 
 
 @experiment(
@@ -358,11 +370,12 @@ def mn_02(ctx):
     method="flush; www.minnsec.test AAAA (prime); www.minnsec.test MX.",
     expected="Synthesized: the NSEC at www lists every type, so it proves MX absent.",
     sources=f"{RFC8198} §5.1; {RFC4470} §3",
+    expected_by={"knot": "Upstream: Knot's release notes (4.1.0, 2019) say aggressive caching is disabled for minimal ranges (CLAUDE.md §6); not re-verified for 6.x."},
 )
 def mn_03(ctx):
     ctx.probe("www.minnsec.test.", "AAAA")
     b = ctx.probe("www.minnsec.test.", "MX")
-    return synth_outcome(b, True) + (rcode_ad(b),)
+    return synth_outcome(b, ctx.expect(True, knot=False)) + (rcode_ad(b),)
 
 
 @experiment(
@@ -382,8 +395,9 @@ def wl_01(ctx):
     id="CN-01", title="Compact NSEC: rcode the client sees for a nonexistent name",
     question="What rcode and AD does a client without CO get from BIND for a compact-denied name?",
     method="flush; nx<tag>.cdoe-nsec.test A (DO=1, CO=0).",
-    expected="NOERROR with AD: RFC 9824 §5.1 says resolvers reset to NOERROR for queriers without CO; BIND 9.20 has no CO support anyway (FINDINGS E1).",
+    expected="NOERROR with AD: RFC 9824 §5.1 says resolvers reset to NOERROR for queriers without CO; BIND 9.20 has no CO support anyway (FINDINGS INFRA.4).",
     sources=f"{RFC9824} §3.1, §5.1",
+    anc=False,
 )
 def cn_01(ctx):
     p = ctx.probe(ctx.label("nx") + ".cdoe-nsec.test.")
@@ -395,12 +409,15 @@ def cn_01(ctx):
     question="Does BIND restore NXDOMAIN for a client that sets CO, and does it send CO upstream?",
     method="flush; nx<tag>.cdoe-nsec.test A with CO=1; check the response and BIND's upstream queries.",
     expected="No: NOERROR without CO and no CO upstream, since BIND's compact-denial support is dig-only. A CO-aware resolver would return NXDOMAIN with CO (RFC 9824 §5.1).",
-    sources=f"{RFC9824} §5.1; FINDINGS E1",
+    sources=f"{RFC9824} §5.1; FINDINGS INFRA.4",
+    expected_by={"knot": 'Unknown (observation): Knot\'s documentation does not mention CO or RFC 9824.',
+                 "pdns": "Unknown (observation): PowerDNS Recursor documentation does not mention CO or RFC 9824."},
+    anc=False,
 )
 def cn_02(ctx):
     p = ctx.probe(ctx.label("nx") + ".cdoe-nsec.test.", co=True)
     co_up = any(u.endswith(" CO") for u in p.upstream)
-    ok = p.rcode == "NOERROR" and "CO" not in p.flags and not co_up
+    ok = ctx.expect(p.rcode == "NOERROR" and "CO" not in p.flags and not co_up, knot=None, pdns=None)
     return p.rcode + (" +CO" if "CO" in p.flags else ""), ok, rcode_ad(p) + f"; CO sent upstream: {co_up}"
 
 
@@ -410,6 +427,7 @@ def cn_02(ctx):
     method="flush; nx<tag>.cdoe-nsec.test A twice.",
     expected="Second query from cache (no upstream).",
     sources=f"{RFC9824} §3.1; RFC 2308",
+    anc=False,
 )
 def cn_03(ctx):
     name = ctx.label("nx") + ".cdoe-nsec.test."
@@ -451,6 +469,7 @@ def cn_05(ctx):
     method="flush; nx<tag>.cdoe-nsec3.test A.",
     expected="NOERROR with AD (as CN-01).",
     sources=f"{RFC9824} §4, §5.1",
+    anc=False,
 )
 def c3_01(ctx):
     p = ctx.probe(ctx.label("nx") + ".cdoe-nsec3.test.")

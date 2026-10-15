@@ -72,12 +72,12 @@ Replace `nsec.test` with any zone (and its `zones/<zone>.anchor`).
 `delv` should print `; fully validated` (or `; negative response, fully validated`).
 Refused queries such as AXFR show up only in `logs/queries.jsonl`.
 
-## Local resolver pipeline (Docker: client -> BIND 9.20.29 -> responder)
+## Local resolver pipeline (Docker: client -> BIND 9.20.29 / Knot Resolver 6.5.0 / PowerDNS Recursor 5.4.7 -> responder)
 
 ```bash
-docker/pipeline.sh up            # build and start; BIND at 172.30.0.20
-docker/pipeline.sh check         # bring-up checks, incl. responder-down SERVFAIL
-docker/pipeline.sh experiments   # catalogued behavior probes; add --only N01,N08 or --slow
+docker/pipeline.sh up            # build and start; BIND .20, Knot .21, PowerDNS .22 (172.30.0.x)
+docker/pipeline.sh check         # bring-up checks for every resolver, incl. responder-down SERVFAIL
+docker/pipeline.sh experiments   # catalogued probes on every resolver; --resolver bind|knot|pdns, --only N01,N08, --slow
 docker/pipeline.sh down
 ```
 

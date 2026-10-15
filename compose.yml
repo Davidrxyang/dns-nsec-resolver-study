@@ -1,4 +1,4 @@
-# Local resolver pipeline: client -> BIND -> responder on a private bridge.
+# Local resolver pipeline: client -> resolvers (BIND, Knot, PowerDNS) -> responder on a private bridge.
 # Start with docker/pipeline.sh up (prepares log dirs), not plain `docker compose up`.
 
 x-bind-image: &bind-image
@@ -43,6 +43,28 @@ services:
     networks:
       lab:
         ipv4_address: 172.30.0.20
+
+  knot:
+    # Knot Resolver v6.5.0 (package 6.5.0.dev1+928fe2-cznic.1), pulled 2026-10-15.
+    image: cznic/knot-resolver@sha256:b2422a58c6b6ab863f24f9e80f65677ae45dcbe0ed9474ced8cb32453f5c49e0
+    depends_on: [responder]
+    volumes:
+      - ./docker/knot/config.yaml:/etc/knot-resolver/config.yaml:ro
+      - ./zones:/etc/knot-resolver/zones:ro      # trust anchors (*.dnskey)
+    networks:
+      lab:
+        ipv4_address: 172.30.0.21
+
+  pdns:
+    # PowerDNS Recursor 5.4.7, pulled 2026-10-15.
+    image: powerdns/pdns-recursor-54@sha256:ec0ad7d67b63e7e31a5847f0a7dd06f43ab0633dc3318e9a7dca7beda84deff8
+    depends_on: [responder]
+    volumes:
+      - ./docker/pdns/recursor.yml:/etc/powerdns/recursor.yml:ro
+      - ./docker/pdns/recursor.d:/etc/powerdns/recursor.d:ro   # anchors.yml (generated)
+    networks:
+      lab:
+        ipv4_address: 172.30.0.22
 
   client:
     image: *bind-image   # only for its dig

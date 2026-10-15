@@ -21,8 +21,43 @@ import dns.rdatatype
 
 REPO = Path(__file__).resolve().parent.parent
 RESPONDER_LOG = REPO / "logs" / "queries.jsonl"
-RESOLVER = "172.30.0.20"        # BIND
 LOG_SETTLE = 0.3                # seconds for the responder to write its log line
+
+
+@dataclass(frozen=True)
+class Resolver:
+    """A resolver in the Docker lab (compose.yml): address, cache flush, version."""
+    name: str
+    ip: str
+    flush: tuple                # docker compose args that empty the whole cache
+    version: tuple              # docker compose args that print the version
+    # False if the lab's routing (forward/stub zones) keeps this resolver from
+    # using aggressive negative caching at all, so ANC experiments are artifacts.
+    anc_in_lab: bool = True
+    lab_note: str = ""
+
+
+RESOLVERS = {
+    "bind": Resolver("bind", "172.30.0.20",
+                     ("exec", "-T", "bind", "rndc", "flush"),
+                     ("exec", "-T", "bind", "named", "-v")),
+    # A full purge (no name) is effective when kresctl returns; checked 2026-10-15.
+    "knot": Resolver("knot", "172.30.0.21",
+                     ("exec", "-T", "knot", "kresctl", "cache", "clear"),
+                     ("exec", "-T", "knot", "kresd", "--version")),
+    # wipe-cache '.$' clears record, negative and packet caches; checked 2026-10-15.
+    "pdns": Resolver("pdns", "172.30.0.22",
+                     ("exec", "-T", "pdns", "rec_control", "wipe-cache", ".$"),
+                     ("exec", "-T", "pdns", "pdns_recursor", "--version"),
+                     anc_in_lab=False,
+                     lab_note="PowerDNS skips its aggressive NSEC cache for forward_zones "
+                              "(syncres.cc: `if (g_aggressiveNSECCache && !wasForwardedOrAuthZone)`)"),
+}
+
+# Queries a resolver sends on its own, not caused by the probe: Knot's RFC 8145
+# trust-anchor signalling (_ta-<keytag>.<zone> NULL), sent at startup, hourly,
+# and after a cache purge (FINDINGS ALL.7).
+SELF_INITIATED = ("_ta-",)
 
 
 def compose(*args, check=True) -> str:
@@ -31,18 +66,19 @@ def compose(*args, check=True) -> str:
     return out.stdout.strip()
 
 
-def flush_cache() -> None:
-    compose("exec", "-T", "bind", "rndc", "flush")
+def flush_cache(resolver: Resolver) -> None:
+    compose(*resolver.flush)
 
 
-def environment() -> dict:
+def environment(resolvers) -> dict:
     def git(*a):
         return subprocess.run(["git", *a], cwd=REPO, capture_output=True, text=True).stdout.strip()
     return {
         "time_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "git_commit": git("rev-parse", "HEAD"),
         "git_dirty": bool(git("status", "--porcelain")),
-        "bind_version": compose("exec", "-T", "bind", "named", "-v", check=False),
+        "resolvers": {r.name: {"ip": r.ip, "version": compose(*r.version, check=False)}
+                      for r in resolvers},
         "images": compose("ps", "--format", "{{.Service}} {{.Image}}", check=False).splitlines(),
     }
 
@@ -69,7 +105,7 @@ class Probe:
     flags: list = field(default_factory=list)
     answer: list = field(default_factory=list)
     authority: list = field(default_factory=list)
-    upstream: list = field(default_factory=list)   # "qname qtype[ CO]" BIND sent to the responder
+    upstream: list = field(default_factory=list)   # "qname qtype[ CO]" the resolver sent to the responder
     error: str = ""
 
     @property
@@ -82,11 +118,17 @@ class Probe:
 
 
 class Context:
-    """Per-experiment helper: fresh labels, probes, and a probe record."""
+    """Per-experiment helper: the resolver under test, fresh labels, probes."""
 
-    def __init__(self):
+    def __init__(self, resolver: Resolver):
+        self.resolver = resolver
         self.tag = f"{random.randrange(10**8):08d}"
         self.probes: list[Probe] = []
+
+    def expect(self, bind, **others):
+        """This resolver's expected value: BIND's unless overridden by name
+        (e.g. knot=None, pdns=False); None means no expectation (observation)."""
+        return others.get(self.resolver.name, bind)
 
     def label(self, prefix: str) -> str:
         """Unique label; the first letter picks the NSEC gap (see zones/nsec.test.zone)."""
@@ -101,9 +143,9 @@ class Context:
         if co:
             q.ednsflags |= dns.flags.CO
         try:
-            r = dns.query.udp(q, RESOLVER, timeout=timeout)
+            r = dns.query.udp(q, self.resolver.ip, timeout=timeout)
             if r.flags & dns.flags.TC:
-                r = dns.query.tcp(q, RESOLVER, timeout=timeout)
+                r = dns.query.tcp(q, self.resolver.ip, timeout=timeout)
             p.rcode = dns.rcode.to_text(r.rcode())
             p.flags = dns.flags.to_text(r.flags).split()
             if r.ednsflags & dns.flags.CO:
@@ -117,12 +159,12 @@ class Context:
         self.probes.append(p)
         return p
 
-    @staticmethod
-    def _upstream_since(offset):
+    def _upstream_since(self, offset):
         if not RESPONDER_LOG.exists():
             return []
         with RESPONDER_LOG.open() as f:
             f.seek(offset)
             lines = [json.loads(line) for line in f if line.strip()]
         return [f"{e.get('qname', '?').lower()} {e.get('qtype', '?')}" + (" CO" if e.get("co") else "")
-                for e in lines if e.get("src") == RESOLVER]
+                for e in lines if e.get("src") == self.resolver.ip
+                and not e.get("qname", "").lower().startswith(SELF_INITIATED)]

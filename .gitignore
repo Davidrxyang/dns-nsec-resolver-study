@@ -5,3 +5,5 @@ logs/
 zones/keys/
 zones/*.anchor
 results/
+zones/*.dnskey
+docker/pdns/recursor.d/anchors.yml
