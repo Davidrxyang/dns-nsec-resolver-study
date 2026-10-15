@@ -30,7 +30,7 @@ def main():
         params = {k: v for k, v in conf.items() if k != "denial"}
         denial = VARIANTS[conf.get("denial", "nsec")](**params)
         z = SignedZone(zf, args.zone_dir / "keys", denial)
-        anchor = args.zone_dir / f"{z.origin.to_text(omit_final_dot=True)}.anchor"
+        anchor = args.zone_dir / f"{z.label}.anchor"
         anchor.write_text(z.anchor_text())
         print(f"loaded {z.origin} denial={conf.get('denial', 'nsec')} key_tag={z.key_tag} anchor={anchor}")
         print(f"  {z.ds_text()}")

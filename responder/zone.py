@@ -47,8 +47,9 @@ class SignedZone:
     def __init__(self, zone_file: Path, key_dir: Path, denial=None):
         self.zone = dns.zone.from_file(str(zone_file), relativize=False)
         self.origin = self.zone.origin
-        name = self.origin.to_text(omit_final_dot=True)
-        self.key = load_or_create_key(key_dir / f"{name}.pem")
+        # File label for keys and anchors; the root zone would otherwise be ".".
+        self.label = "root" if self.origin == dns.name.root else self.origin.to_text(omit_final_dot=True)
+        self.key = load_or_create_key(key_dir / f"{self.label}.pem")
         self.dnskey = dns.dnssec.make_dnskey(self.key.public_key(), ALGORITHM, DNSKEY_FLAGS)
         self.key_tag = dns.dnssec.key_id(self.dnskey)
 

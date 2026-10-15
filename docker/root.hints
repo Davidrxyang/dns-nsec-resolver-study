@@ -1,0 +1,3 @@
+; Root hints for the lab's local root (zones/root/root.zone.in), used by every resolver.
+.                       3600000  NS  a.root.lab.
+a.root.lab.             3600000  A   172.30.0.11

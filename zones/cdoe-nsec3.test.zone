@@ -2,9 +2,9 @@
 ; Short SOA minimum (60) so plain negative caching will not mask ANC later.
 $ORIGIN cdoe-nsec3.test.
 $TTL 300
-@           SOA   ns1 hostmaster 2 3600 600 86400 60
+@           SOA   ns1 hostmaster 3 3600 600 86400 60
 @           NS    ns1
-ns1         A     127.0.0.1
+ns1         A     172.30.0.10
 www         A     192.0.2.1
 www         TXT   "hello from cdoe-nsec3.test"
 

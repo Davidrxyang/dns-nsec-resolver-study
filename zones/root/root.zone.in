@@ -1,0 +1,26 @@
+; Local signed root zone for the lab: resolvers reach the six variant zones by
+; ordinary delegation from here (FINDINGS INFRA.7, INFRA.8). docker/pipeline.sh up
+; writes root.zone = this template + one DS record per variant zone, computed from
+; that zone's key. Resolvers get docker/root.hints and this zone's key as their
+; only trust anchor. Served by the "root" container at 172.30.0.11.
+$ORIGIN .
+$TTL 300
+@                   SOA   a.root.lab. hostmaster.root.lab. 1 1800 900 604800 60
+@                   NS    a.root.lab.
+a.root.lab.         A     172.30.0.11
+
+; Delegations to the responder (172.30.0.10), one per variant zone, with glue.
+nsec.test.          NS    ns1.nsec.test.
+ns1.nsec.test.      A     172.30.0.10
+nsec3.test.         NS    ns1.nsec3.test.
+ns1.nsec3.test.     A     172.30.0.10
+minnsec.test.       NS    ns1.minnsec.test.
+ns1.minnsec.test.   A     172.30.0.10
+minnsec3.test.      NS    ns1.minnsec3.test.
+ns1.minnsec3.test.  A     172.30.0.10
+cdoe-nsec.test.     NS    ns1.cdoe-nsec.test.
+ns1.cdoe-nsec.test. A     172.30.0.10
+cdoe-nsec3.test.    NS    ns1.cdoe-nsec3.test.
+ns1.cdoe-nsec3.test. A    172.30.0.10
+
+; DS records (generated):

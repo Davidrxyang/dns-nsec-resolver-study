@@ -10,7 +10,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 - **Old IDs** (A1–F7, used before 2026-10-15) map to the new ones in the table at the end.
 
 **Status values** (per resolver row)
-- **lab artifact**: the lab setup prevents measuring this for that resolver (see INFRA.7); not a property of the resolver.
+- **lab artifact**: the lab setup prevented measuring this for that resolver (INFRA.7, before INFRA.8); not a property of the resolver.
 - **diag**: seen in the local Docker pipeline only. Must be re-measured in the production setup before it counts as a result.
 - **doc**: stated in vendor documentation or an RFC, and reproduced.
 - **conf**: reproduced in the production setup (none yet).
@@ -25,10 +25,9 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 | Unbound | not deployed | | | |
 | PowerDNS Recursor | 5.4.7 | `powerdns/pdns-recursor-54@sha256:ec0ad7d6…eff8` | 172.30.0.22 | `docker/pdns/recursor.yml` (defaults + `dnssec.validation: validate`) |
 
-- **Setup:** every resolver reaches the responder (172.30.0.10) through a static-stub/forward per zone, with local trust anchors.
+- **Setup (since run 20261015T191407Z):** every resolver reaches the six zones by **ordinary delegation** from a signed local root (172.30.0.11), with that root's key as its only trust anchor (INFRA.8). Earlier runs used a static-stub/forward per zone with per-zone anchors (INFRA.7).
 - **Zones:** six zones, same content, one per variant (docs/VARIANTS.md, docs/zones/).
-- **Latest full run:** `results/20261015T185519Z` (BIND, Knot, PowerDNS; `--slow`).
-- **Caution:** PowerDNS cannot do aggressive negative caching in this lab (INFRA.7); its ANC rows are marked "lab artifact".
+- **Latest full run:** `results/20261015T191407Z` (BIND, Knot, PowerDNS via the local root; `--slow`). Last run with forwarding: `results/20261015T185519Z`.
 - **Reproduce:** `docker/pipeline.sh up && docker/pipeline.sh experiments --slow`. Experiment IDs refer to `experiments/CATALOG.md`. Validator and reference checks: `venv/bin/python -m tests.reference`.
 
 ---
@@ -55,7 +54,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 | BIND | Remaining TTL (60 → 50); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 |
 | Knot | Remaining TTL (60 → 49–50); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 |
 | Unbound | — | — | |
-| PowerDNS | Not measurable in the lab: its aggressive cache is bypassed for forwarded zones | lab artifact (INFRA.7) | N01, N02, N12 |
+| PowerDNS | Remaining TTL (60 → 49); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 (run 20261015T191407Z) |
 
 - **Note:** Knot clamps every cached TTL to at least 5 s (`cache.ttl-min` default), which matters only for TTL experiments below 5 s.
 
@@ -67,7 +66,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 | BIND | Irrelevant: validates and caches regardless; a DO=0 client gets SOA only | diag | N09, N10 |
 | Knot | Same as BIND | diag | N09, N10 |
 | Unbound | — | — | |
-| PowerDNS | Not measurable (synthesis bypassed) | lab artifact (INFRA.7) | N09, N10 |
+| PowerDNS | Same as BIND and Knot | diag | N09, N10 |
 
 - **Interpretation:** DO only shapes what the client is shown.
 
@@ -80,21 +79,21 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 | BIND | Synthesizes; answers with **AD=1** | diag (5+ runs) | N08 |
 | Knot | Synthesizes; answers with **AD=0** | diag | N08 |
 | Unbound | — | — | |
-| PowerDNS | Not measurable (synthesis bypassed) | lab artifact (INFRA.7) | N08 |
+| PowerDNS | Synthesizes; answers with **AD=1** (like BIND) | diag | N08 |
 
 - **Interpretation:** both depart from the RFC's implementation note. AD on CD=1 answers is a separate question (RFC 6840 §5.7–5.9) where they disagree.
 - **Follow-up:** check BIND and Knot sources for intent; whether CD=1 also skips validation of upstream data.
 
-### ALL.5 Relaxed QNAME minimisation re-asks the full name after a validated NXDOMAIN
+### ALL.5 The upstream query pattern for a deep nonexistent name differs by resolver and by routing
 - **Question:** for a deep nonexistent name, what does the resolver send upstream?
 - **Experiment:** N11 (`d1.d2.m<tag>.nsec.test A` after a flush).
 
 | Resolver | Result | Status | Evidence |
 |---|---|---|---|
-| BIND | NS for `m<tag>`, DNSKEY, then the **full name** anyway: 3 upstream | doc (ARM: relaxed mode "falls back to normal (non-minimized) query mode when it receives either NXDOMAIN or other unexpected responses") | N11 |
-| Knot | The same pattern: DNSKEY, NS for `m<tag>`, then the full name | diag | N11 |
+| BIND | Forwarding (static-stub): NS for `m<tag>`, DNSKEY, full name (3 upstream). **Delegation:** NS for `m<tag>`, AAAA for its own nameserver name `ns1.nsec.test` (no AAAA glue), DNSKEY, full name (4) | doc (ARM: relaxed mode "falls back to normal (non-minimized) query mode when it receives either NXDOMAIN") | N11 (runs 20261015T185519Z, 20261015T191407Z) |
+| Knot | Forwarding: DNSKEY, NS for `m<tag>`, full name (3). **Delegation:** DNSKEY, then the full name directly (2): no minimisation below the zone cut | diag | N11 (runs 20261015T185519Z, 20261015T191407Z) |
 | Unbound | — | — | |
-| PowerDNS | 3 upstream, but a different pattern: minimised query uses **qtype A** (`m<tag>.nsec.test A`), then DNSKEY, then the full name | diag | N11 |
+| PowerDNS | Forwarding: `m<tag>` **A**, DNSKEY, full name (3). **Delegation:** `m<tag>` A, DNSKEY, then **stops** (2): the validated NXDOMAIN ends resolution (`nothing_below_nxdomain: dnssec`, RFC 8020) | diag | N11 (runs 20261015T185519Z, 20261015T191407Z) |
 
 - **Interpretation:** the fallback ignores the resolver's own validated denial (RFC 8020 cut, RFC 8198).
 - **Measurement impact:** a deep first query costs 2 upstream queries plus DNSKEY. Don't misread that as missing ANC.
@@ -138,6 +137,34 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 
 - **Measurement impact:** probe timeouts must exceed the resolver's own upstream retry time. `pipeline.sh check` uses `+time=30`.
 
+### ALL.9 Resolvers may answer `.test` names themselves (RFC 6761 special-use handling)
+- **Question:** RFC 6761 lets resolvers treat special-use names such as `.test` locally. Do they, and how does that interact with routing?
+- **Evidence:** after switching to delegation, without an explicit per-zone rule.
+
+| Resolver | Result | Status | Evidence |
+|---|---|---|---|
+| BIND | No: resolves `.test` through the configured root | diag | root log |
+| Knot | **Yes**: answers every `.test` name itself with a synthetic empty zone (`test. SOA localhost. nobody.invalid. …`), as **NXDOMAIN with AD set**, without asking the root. Hidden while a `forward` rule for each zone took precedence. Lab fix: `policy.add(policy.suffix(policy.PASS, policy.todnames({'test.'})))` in the Lua block (Knot policy docs: special-use rules "can be overridden by action policy.PASS") | diag | dig `foo.test`; root log (no queries until PASS) |
+| Unbound | — (documented to serve `test.` locally by default; needs `local-zone: "test." nodefault`) | — | |
+| PowerDNS | No: resolves `.test` through the configured root | diag | root log |
+
+- **Interpretation:** Knot marks locally invented NXDOMAINs as authenticated, which a client cannot tell apart from a DNSSEC-proven NXDOMAIN.
+- **Measurement impact:** in-the-wild zones must not live under special-use names; lab configs need an explicit exemption per resolver.
+
+### ALL.10 Resolvers may refuse to query nameservers at private or special-purpose addresses
+- **Question:** a delegation whose nameserver addresses are private (the lab uses 172.30.0.0/24) is unusual on the Internet but common inside networks. Do resolvers follow it by default?
+- **Evidence:** default configuration values, and the lab after switching to delegation (INFRA.8).
+
+| Resolver | Result | Status | Evidence |
+|---|---|---|---|
+| BIND | Queries the lab addresses with no configuration change | diag | root and responder logs |
+| Knot | Queries the lab addresses with no configuration change | diag | root and responder logs |
+| Unbound | — (documented: `do-not-query-localhost: yes` blocks only loopback; `private-address` is empty by default) | — | |
+| PowerDNS | **No by default**: `outgoing.dont_query` defaults to RFC 1918, loopback, link-local, CGNAT and the documentation ranges, including 172.16.0.0/12. Lab exemption: the same list without 172.16.0.0/12. Forwarders (`forward_zones`) are exempt, so this only appeared with delegation | doc (default list) | `rec_control get-parameter outgoing.dont_query`; PowerDNS settings docs |
+
+- **Interpretation:** a hardening default (it stops a delegation from steering the resolver at internal hosts), and another way forwarding and delegation behave differently in PowerDNS (cf. INFRA.7). PowerDNS also refuses 192.0.2.0/24 even with the exemption, which only affects the deliberately unreachable glue of `secure.*` and `insecure.*` in our zones.
+- **Measurement impact:** none in the wild (public addresses). In the lab, the exemption is a deviation from defaults; see the list in INFRA.8.
+
 ---
 
 ## NSEC. Vanilla NSEC (`nsec.test`)
@@ -151,7 +178,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 | BIND | All six synthesized, with AD | doc (ARM `synth-from-dnssec`) | N01, N03–N07 |
 | Knot | All six synthesized, with AD | doc (docs: "aggressive caching for DNSSEC-validated data") | N01, N03–N07 |
 | Unbound | — | — | |
-| PowerDNS | None synthesized: aggressive cache skipped for `forward_zones` (records are stored, never used) | lab artifact (INFRA.7) | N01, N03–N07; source |
+| PowerDNS | All six synthesized, with AD | doc (`dnssec.aggressive_nsec_cache_size`, RFC 8198) | N01, N03–N07 (run 20261015T191407Z) |
 
 ### NSEC.2 Synthesized names leave no per-name cache entry
 - **Question:** what does synthesis store (the storage stage)?
@@ -193,11 +220,11 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 | Resolver | Result | Status | Evidence |
 |---|---|---|---|
 | BIND | **Never**: all three upstream | doc (ARM: synthesis "only from NSEC"; NSEC3 "planned for the future") | N3-01/03/06 |
-| Knot | **Yes** for NXDOMAIN and NODATA (N3-01, N3-03: every run). **Wildcard (N3-06) is variable**: synthesized in 2 of 8 runs; in failing runs the second probe first sends a minimisation query `wild.nsec3.test NS`, then the full name | diag | N3-01/03/06; runs 20261015T172911Z, 20261015T185519Z + 6 repeats |
+| Knot | **Yes** for NXDOMAIN and NODATA (N3-01, N3-03: every run). **Wildcard (N3-06) is variable**: synthesized in 3 of 9 runs; in failing runs the second probe first sends a minimisation query `wild.nsec3.test NS`, then the full name | diag | N3-01/03/06; runs 20261015T172911Z, 20261015T185519Z, 20261015T191407Z + 6 repeats |
 | Unbound | — | — | |
-| PowerDNS | Not measurable (synthesis bypassed); documented to synthesize from NSEC3 subject to `aggressive_cache_min_nsec3_hit_ratio` | lab artifact (INFRA.7) | N3-01/03/06 |
+| PowerDNS | **Yes** for NXDOMAIN and NODATA (N3-01, N3-03); **no** for the wildcard (N3-06, 1 run) | doc (aggressive NSEC3 with `aggressive_cache_min_nsec3_hit_ratio` 2000; our spans ≈ 1/9) | N3-01/03/06 (run 20261015T191407Z) |
 
-- **Interpretation:** the clearest resolver difference so far. On Knot, the NSEC3 variants are distinguishable by synthesis (vanilla synthesized; white lies and compact not, WL.2 and CDOE.2). On BIND they cannot be.
+- **Interpretation:** the clearest resolver difference so far: BIND never synthesizes from NSEC3, Knot and PowerDNS do (NXDOMAIN and NODATA). On Knot and PowerDNS the NSEC3 variants are distinguishable by synthesis (vanilla synthesized; white lies and compact not, WL.2 and CDOE.2). On BIND they cannot be. The NSEC3 wildcard case is unreliable (Knot variable, PowerDNS not in one run).
 - **Follow-up:** an NSEC3 opt-out zone (RFC 8198 §5.2: opt-out spans must not be used for synthesis); NSEC3 TTL expiry; inspect Knot's cached NSEC3; explain Knot's N3-06 variability (hypothesis: whether the closest-encloser proof for the ENT `wild` is cached depends on the minimisation query's outcome; a wildcard answer carries only the next-closer cover, RFC 5155 §7.2.6).
 
 ### NSEC3.2 NSEC3 NXDOMAIN has 2 or 3 records, depending on the name
@@ -227,7 +254,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 | BIND | **None synthesized**, even where provable (MN-02, MN-03). Cause: `rndc dumpdb -cache` shows minimal NSECs only attached to negative entries, never as standalone records, whereas vanilla NSECs are stored standalone too | diag (3+ runs); **undocumented** (no ISC source found, 2026-10-14) | MN-01/02/03; cache dump |
 | Knot | None synthesized | doc (Knot 4.1.0 release notes: aggressive caching disabled for minimal ranges; not re-verified for 6.x) | MN-01/02/03 |
 | Unbound | — | — | |
-| PowerDNS | Not measurable (synthesis bypassed) | lab artifact (INFRA.7) | MN-01/02/03 |
+| PowerDNS | No synthesis from minimal NSEC NODATA (MN-03 upstream). MN-02 (name below a minimal NXDOMAIN) was answered without the responder, most likely by its RFC 8020 rule (`nothing_below_nxdomain: dnssec`), not NSEC synthesis | diag | MN-01/02/03 (run 20261015T191407Z) |
 
 - **Interpretation:** both resolvers so far keep minimal NSEC out of aggressive negative caching, Knot by design and BIND silently. This bears on CLAUDE.md's open question of whether BIND recognizes minimally covering NSEC.
 - **Follow-up:** a discriminating experiment with responder knobs (which property triggers BIND: next name below the owner, owner not a real name, span width, `\000` labels?); BIND source (`lib/dns/qpcache.c`, `nsec.c`).
@@ -278,7 +305,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 | BIND | Upstream (no NSEC3 synthesis at all, NSEC3.1) | doc | WL-01 |
 | Knot | Upstream, **although Knot synthesizes from vanilla NSEC3** (NSEC3.1): each record covers only one hash | diag | WL-01 |
 | Unbound | — | — | |
-| PowerDNS | Not measurable in the lab (synthesis bypassed); documented: Recursor ≥ 4.9.0 keeps "NSEC3 entries which cover only a small fraction of possible names" out of its aggressive cache | lab artifact (INFRA.7) | WL-01 |
+| PowerDNS | Upstream, consistent with its documented filter (Recursor ≥ 4.9.0 keeps "NSEC3 entries which cover only a small fraction of possible names" out of its aggressive cache), although with 1-hash spans no resolver could synthesize anyway | diag | WL-01 (run 20261015T191407Z) |
 
 - **Follow-up:** PowerDNS is the resolver documented to detect this case explicitly.
 
@@ -308,7 +335,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 | BIND | Same name from cache; all others upstream | doc (RFC 9824 §6: RFC 8198 and RFC 8020 not supported) | CN-03/04/05, C3-02 |
 | Knot | Same as BIND (including C3-02, although Knot synthesizes from vanilla NSEC3) | diag | CN-03/04/05, C3-02 |
 | Unbound | — | — | |
-| PowerDNS | Same name from cache (CN-03); other names upstream (CN-04/05, C3-02; the latter also an artifact) | diag | CN-03/04/05, C3-02 |
+| PowerDNS | Same as BIND and Knot | diag | CN-03/04/05, C3-02 |
 
 ---
 
@@ -355,7 +382,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 - **Note:** explains transport fields in logs from manual tests; irrelevant to resolvers.
 
 ### INFRA.7 The lab's zone routing (static-stub / forward) is not neutral: PowerDNS disables aggressive caching for forwarded zones
-- **Status:** doc (source code), observed 2026-10-15. **Affects every ANC result for PowerDNS in the local lab.**
+- **Status:** doc (source code), observed 2026-10-15. **Resolved in the lab by INFRA.8** (delegation instead of forwarding); kept as a finding because it describes PowerDNS behavior for any forwarded zone.
 - **Evidence:**
   - PowerDNS reaches our zones through `recursor.forward_zones` (RD=0), the only per-zone routing it offers. It validates, caches and *stores* NSEC records in its aggressive cache (`rec_control dump-cache - a`), but never synthesized: the `aggressive-nsec-cache-nsec-hits` counter didn't move, and every same-gap name went upstream (bring-up, 3 paused retries, run 20261015T185519Z).
   - `rec_control trace-regex` shows resolution going "Step0 Not cached → qname is in a forwarded domain" straight to the forwarder, with no aggressive-cache step.
@@ -363,6 +390,27 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 - **Interpretation:** a deliberate PowerDNS design choice for forwarded and auth zones, not a bug and not its behavior on delegated zones. BIND (static-stub) and Knot (`forward` with `authoritative: true`) do use their aggressive caches for the same setup, so the routing artifact only shows up per resolver.
 - **Implication:** to measure PowerDNS (and to remove routing as a confounder for all resolvers), resolvers should reach the zones through **ordinary delegation**: a local signed root (or `test.` parent) with NS + DS for each variant zone, a custom root hint per resolver, and the local root key as trust anchor. That's the same resolution path as the planned in-the-wild setup (CLAUDE.md §8).
 - **Sources:** https://raw.githubusercontent.com/PowerDNS/pdns/rel/rec-5.4.x/pdns/recursordist/syncres.cc; trace output; `docker/pipeline.sh check` observation lines.
+
+### INFRA.8 Local delegation setup: resolvers reach the zones from a signed local root
+- **Status:** resolved (built 2026-10-15; 55/55 pipeline checks, run 20261015T191407Z).
+- **Setup:**
+  - A second responder instance (`root`, 172.30.0.11) serves `zones/root/root.zone`: a signed root zone that delegates the six variant zones to the responder (NS, glue `172.30.0.10`, DS). The DS records are generated by `pipeline.sh up` from the zones' keys.
+  - Every resolver gets `docker/root.hints` and the local root's key as its **only** trust anchor (BIND `dnssec-validation yes`; Knot's file replaces its default root anchor, "overriding previously set trust anchors for ."; PowerDNS `trustanchors` for `.`).
+  - Static-stub and forward zones are gone.
+- **Lab-only exemptions and deviations from defaults** (each also commented in its config file). Every one of them must be removed, or re-justified, when moving to the in-the-wild setup, where the zones live under a real domain at public addresses:
+
+  | Resolver | Setting | Why | Needed in the wild? |
+  |---|---|---|---|
+  | all | Root hints `docker/root.hints` and the lab root key as the only trust anchor | the lab has its own root | no: the real root and its default anchor |
+  | Knot | Lua `policy.add(policy.suffix(policy.PASS, policy.todnames({'test.'})))` in `docker/knot/config.yaml` | Knot answers `.test` itself (RFC 6761) with an AD-flagged NXDOMAIN (ALL.9) | no: real domains aren't special-use |
+  | Knot | Lua `modules.load('hints > iterate'); hints.root{…}` | Knot 6's YAML has no root-hints option | no |
+  | PowerDNS | `outgoing.dont_query` = default list without 172.16.0.0/12 in `docker/pdns/recursor.yml` | the default refuses to query private addresses, which include the lab network (ALL.10) | no: public addresses |
+  | PowerDNS | `dnssec.validation: validate` instead of the default `process` | validate every answer, like BIND and Knot | a choice: keep it, and record it |
+  | BIND | none beyond hints and anchor (`.test` and private addresses work by default) | | |
+  | Unbound (planned) | `local-zone: "test." nodefault` | documented to answer `.test` locally (ALL.9) | no |
+
+- **Zone files:** `ns1 A` changed from 127.0.0.1 to 172.30.0.10, because delegation-following resolvers use it.
+- **Effect:** PowerDNS's aggressive caching became measurable (INFRA.7). The routing change also altered other behavior (ALL.5, ALL.9, ALL.10), confirming that routing was a confounder.
 
 ---
 

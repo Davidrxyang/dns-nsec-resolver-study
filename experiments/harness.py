@@ -48,10 +48,10 @@ RESOLVERS = {
     # wipe-cache '.$' clears record, negative and packet caches; checked 2026-10-15.
     "pdns": Resolver("pdns", "172.30.0.22",
                      ("exec", "-T", "pdns", "rec_control", "wipe-cache", ".$"),
-                     ("exec", "-T", "pdns", "pdns_recursor", "--version"),
-                     anc_in_lab=False,
-                     lab_note="PowerDNS skips its aggressive NSEC cache for forward_zones "
-                              "(syncres.cc: `if (g_aggressiveNSECCache && !wasForwardedOrAuthZone)`)"),
+                     ("exec", "-T", "pdns", "pdns_recursor", "--version")),
+    # Before the lab root (INFRA.8), PowerDNS reached the zones via forward_zones and
+    # could not synthesize at all (INFRA.7): set anc_in_lab=False for any resolver
+    # that must use forwarding, so its ANC results are reported as lab artifacts.
 }
 
 # Queries a resolver sends on its own, not caused by the probe: Knot's RFC 8145

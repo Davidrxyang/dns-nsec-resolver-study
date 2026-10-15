@@ -7,3 +7,7 @@ zones/*.anchor
 results/
 zones/*.dnskey
 docker/pdns/recursor.d/anchors.yml
+zones/root/keys/
+zones/root/*.anchor
+zones/root/*.dnskey
+zones/root/root.zone

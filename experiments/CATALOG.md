@@ -19,11 +19,11 @@ Expected applies to every resolver unless a resolver-specific expectation is lis
 | N10 | runnable | Priming from a DO=0 client | Synthesized (the resolver validates regardless of the client's DO). | — | yes | RFC 8198 §5; RFC 4035 §4 |
 | N11 | runnable | Upstream queries for a deep nonexistent name | Relaxed QNAME minimisation (BIND default): NS query for m<tag>.nsec.test, then on NXDOMAIN a fallback full query for d1.d2.m<tag>, although the cached NSEC already proves it. Plus a DNSKEY fetch after the flush. | **knot**: Unknown (observation): Knot's minimisation strategy is not documented in the same terms.; **pdns**: Unknown (observation): qname_minimization is on by default (relaxed RFC 9156); nothing_below_nxdomain=dnssec may stop at the validated NXDOMAIN. | no | BIND ARM qname-minimization (relaxed: falls back on NXDOMAIN); RFC 9156; RFC 8020 |
 | N12 | runnable (slow) | Synthesis stops after the NSEC TTL | Upstream. | — | yes | RFC 8198 §5.4; RFC 9077 |
-| N3-01 | runnable | NSEC3: NXDOMAIN, same hash gap (counterpart of N01) | Upstream: BIND synthesizes from NSEC only; NSEC3 synthesis is 'planned for the future'. RFC 8198 §5.2 would allow it. | **knot**: Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot's docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC. | yes | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2 |
-| N3-03 | runnable | NSEC3: NODATA, other type at an existing name (counterpart of N03) | Upstream (no NSEC3 synthesis in BIND). | **knot**: Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot's docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC. | yes | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2 |
-| N3-06 | runnable | NSEC3: positive wildcard (counterpart of N06) | Upstream (no NSEC3-based wildcard synthesis in BIND). RFC 8198 §5.3 would allow it. | **knot**: Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot's docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC. | yes | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.3 |
+| N3-01 | runnable | NSEC3: NXDOMAIN, same hash gap (counterpart of N01) | Upstream: BIND synthesizes from NSEC only; NSEC3 synthesis is 'planned for the future'. RFC 8198 §5.2 would allow it. | **knot**: Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot's docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.; **pdns**: Synthesized: PowerDNS caches NSEC3 aggressively when a record covers more than 1/aggressive_cache_min_nsec3_hit_ratio (default 2000) of the hash space; our 9-record zone's spans are about 1/9. | yes | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2 |
+| N3-03 | runnable | NSEC3: NODATA, other type at an existing name (counterpart of N03) | Upstream (no NSEC3 synthesis in BIND). | **knot**: Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot's docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.; **pdns**: Synthesized: PowerDNS caches NSEC3 aggressively when a record covers more than 1/aggressive_cache_min_nsec3_hit_ratio (default 2000) of the hash space; our 9-record zone's spans are about 1/9. | yes | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2 |
+| N3-06 | runnable | NSEC3: positive wildcard (counterpart of N06) | Upstream (no NSEC3-based wildcard synthesis in BIND). RFC 8198 §5.3 would allow it. | **knot**: Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot's docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.; **pdns**: Synthesized: PowerDNS caches NSEC3 aggressively when a record covers more than 1/aggressive_cache_min_nsec3_hit_ratio (default 2000) of the hash space; our 9-record zone's spans are about 1/9. | yes | BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.3 |
 | MN-01 | runnable | Minimal NSEC: second name beside a cached NXDOMAIN (counterpart of N01) | Upstream: the cover spans only m<tag>a's subtree, which defeats ANC by design. | — | yes | RFC 4470 §1; RFC 8198 §5.1 |
-| MN-02 | runnable | Minimal NSEC: name below a cached NXDOMAIN (counterpart of N05) | Synthesized (the cached cover and wildcard cover prove it). Depends on D14; with cover_next='child' the span would not reach sub.m<tag>a. | **knot**: Upstream: Knot's release notes (4.1.0, 2019) say aggressive caching is disabled for minimal ranges (CLAUDE.md §6); not re-verified for 6.x. | yes | RFC 8198 §5.1; RFC 4470 erratum 6734; docs/VARIANTS.md D14 |
+| MN-02 | runnable | Minimal NSEC: name below a cached NXDOMAIN (counterpart of N05) | Synthesized (the cached cover and wildcard cover prove it). Depends on D14; with cover_next='child' the span would not reach sub.m<tag>a. | **knot**: Upstream: Knot's release notes (4.1.0, 2019) say aggressive caching is disabled for minimal ranges (CLAUDE.md §6); not re-verified for 6.x.; **pdns**: Unknown (observation): note that PowerDNS's nothing_below_nxdomain=dnssec (RFC 8020) answers names below a validated NXDOMAIN without NSEC synthesis, so a 'synthesized' outcome here does not show synthesis from minimal NSEC. | yes | RFC 8198 §5.1; RFC 4470 erratum 6734; docs/VARIANTS.md D14 |
 | MN-03 | runnable | Minimal NSEC: NODATA, other type at an existing name (counterpart of N03) | Synthesized: the NSEC at www lists every type, so it proves MX absent. | **knot**: Upstream: Knot's release notes (4.1.0, 2019) say aggressive caching is disabled for minimal ranges (CLAUDE.md §6); not re-verified for 6.x. | yes | RFC 8198 §5.1; RFC 4470 §3 |
 | WL-01 | runnable | NSEC3 white lies: second name (counterpart of N3-01) | Upstream: BIND does no NSEC3 synthesis, and the covers span only hash±1. | — | yes | BIND ARM synth-from-dnssec (NSEC only); RFC 7129 App. B |
 | CN-01 | runnable | Compact NSEC: rcode the client sees for a nonexistent name | NOERROR with AD: RFC 9824 §5.1 says resolvers reset to NOERROR for queriers without CO; BIND 9.20 has no CO support anyway (FINDINGS INFRA.4). | — | no | RFC 9824 §3.1, §5.1 |
@@ -143,6 +143,7 @@ Expected applies to every resolver unless a resolver-specific expectation is lis
 - **Method:** flush; two labels chosen so their hashes share one NSEC3 gap; <l1>.nsec3.test A (prime); <l2>.nsec3.test A.
 - **Expected:** Upstream: BIND synthesizes from NSEC only; NSEC3 synthesis is 'planned for the future'. RFC 8198 §5.2 would allow it.
 - **Expected (knot):** Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot's docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.
+- **Expected (pdns):** Synthesized: PowerDNS caches NSEC3 aggressively when a record covers more than 1/aggressive_cache_min_nsec3_hit_ratio (default 2000) of the hash space; our 9-record zone's spans are about 1/9.
 - **Tests aggressive negative caching:** yes
 - **Sources:** BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2
 
@@ -152,6 +153,7 @@ Expected applies to every resolver unless a resolver-specific expectation is lis
 - **Method:** flush; www.nsec3.test AAAA (prime); www.nsec3.test MX.
 - **Expected:** Upstream (no NSEC3 synthesis in BIND).
 - **Expected (knot):** Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot's docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.
+- **Expected (pdns):** Synthesized: PowerDNS caches NSEC3 aggressively when a record covers more than 1/aggressive_cache_min_nsec3_hit_ratio (default 2000) of the hash space; our 9-record zone's spans are about 1/9.
 - **Tests aggressive negative caching:** yes
 - **Sources:** BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.2
 
@@ -161,6 +163,7 @@ Expected applies to every resolver unless a resolver-specific expectation is lis
 - **Method:** flush; two labels whose <label>.wild.nsec3.test hashes share one NSEC3 gap; query both, A.
 - **Expected:** Upstream (no NSEC3-based wildcard synthesis in BIND). RFC 8198 §5.3 would allow it.
 - **Expected (knot):** Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot's docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.
+- **Expected (pdns):** Synthesized: PowerDNS caches NSEC3 aggressively when a record covers more than 1/aggressive_cache_min_nsec3_hit_ratio (default 2000) of the hash space; our 9-record zone's spans are about 1/9.
 - **Tests aggressive negative caching:** yes
 - **Sources:** BIND ARM synth-from-dnssec (NSEC only); RFC 8198 §5.3
 
@@ -178,6 +181,7 @@ Expected applies to every resolver unless a resolver-specific expectation is lis
 - **Method:** flush; m<tag>a.minnsec.test A (prime); sub.m<tag>a.minnsec.test A.
 - **Expected:** Synthesized (the cached cover and wildcard cover prove it). Depends on D14; with cover_next='child' the span would not reach sub.m<tag>a.
 - **Expected (knot):** Upstream: Knot's release notes (4.1.0, 2019) say aggressive caching is disabled for minimal ranges (CLAUDE.md §6); not re-verified for 6.x.
+- **Expected (pdns):** Unknown (observation): note that PowerDNS's nothing_below_nxdomain=dnssec (RFC 8020) answers names below a validated NXDOMAIN without NSEC synthesis, so a 'synthesized' outcome here does not show synthesis from minimal NSEC.
 - **Tests aggressive negative caching:** yes
 - **Sources:** RFC 8198 §5.1; RFC 4470 erratum 6734; docs/VARIANTS.md D14
 

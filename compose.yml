@@ -1,4 +1,6 @@
-# Local resolver pipeline: client -> resolvers (BIND, Knot, PowerDNS) -> responder on a private bridge.
+# Local resolver pipeline on a private bridge:
+#   client -> resolvers (BIND, Knot, PowerDNS) -> local root (.11) -> responder (.10)
+# Resolvers reach the variant zones by ordinary delegation (FINDINGS INFRA.8).
 # Start with docker/pipeline.sh up (prepares log dirs), not plain `docker compose up`.
 
 x-bind-image: &bind-image
@@ -27,9 +29,25 @@ services:
       lab:
         ipv4_address: 172.30.0.10
 
+  # Second instance of the responder serving only the lab's signed root zone,
+  # which delegates the six variant zones (NS, glue, DS) to the responder.
+  root:
+    image: dns-nsec-resolver-study-responder
+    depends_on: [responder]
+    user: "${UID:-1000}:${GID:-1000}"
+    init: true
+    command: ["--addr", "0.0.0.0", "--port", "53", "--zone-dir", "/app/zones/root",
+              "--log", "/app/logs/root-queries.jsonl"]
+    volumes:
+      - ./zones:/app/zones
+      - ./logs:/app/logs
+    networks:
+      lab:
+        ipv4_address: 172.30.0.11
+
   bind:
     image: *bind-image
-    depends_on: [responder]
+    depends_on: [responder, root]
     # Create the rndc key (used by `rndc` inside this container), then run
     # named exactly as the image's default entrypoint/cmd would.
     entrypoint:
@@ -38,7 +56,8 @@ services:
       - rndc-confgen -a -u bind && exec /usr/sbin/named -u bind -f -c /etc/bind/named.conf
     volumes:
       - ./docker/bind/named.conf:/etc/bind/named.conf:ro
-      - ./zones:/etc/bind/zones:ro       # trust anchors (*.anchor)
+      - ./zones:/etc/bind/zones:ro       # lab root anchor (zones/root/root.anchor)
+      - ./docker/root.hints:/etc/bind/root.hints:ro
       - ./logs/bind:/var/log/bind
     networks:
       lab:
@@ -47,10 +66,10 @@ services:
   knot:
     # Knot Resolver v6.5.0 (package 6.5.0.dev1+928fe2-cznic.1), pulled 2026-10-15.
     image: cznic/knot-resolver@sha256:b2422a58c6b6ab863f24f9e80f65677ae45dcbe0ed9474ced8cb32453f5c49e0
-    depends_on: [responder]
+    depends_on: [responder, root]
     volumes:
       - ./docker/knot/config.yaml:/etc/knot-resolver/config.yaml:ro
-      - ./zones:/etc/knot-resolver/zones:ro      # trust anchors (*.dnskey)
+      - ./zones:/etc/knot-resolver/zones:ro      # lab root anchor (zones/root/root.dnskey)
     networks:
       lab:
         ipv4_address: 172.30.0.21
@@ -58,10 +77,11 @@ services:
   pdns:
     # PowerDNS Recursor 5.4.7, pulled 2026-10-15.
     image: powerdns/pdns-recursor-54@sha256:ec0ad7d67b63e7e31a5847f0a7dd06f43ab0633dc3318e9a7dca7beda84deff8
-    depends_on: [responder]
+    depends_on: [responder, root]
     volumes:
       - ./docker/pdns/recursor.yml:/etc/powerdns/recursor.yml:ro
       - ./docker/pdns/recursor.d:/etc/powerdns/recursor.d:ro   # anchors.yml (generated)
+      - ./docker/root.hints:/etc/powerdns/root.hints:ro
     networks:
       lab:
         ipv4_address: 172.30.0.22

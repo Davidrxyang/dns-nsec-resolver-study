@@ -81,6 +81,10 @@ docker/pipeline.sh experiments   # catalogued probes on every resolver; --resolv
 docker/pipeline.sh down
 ```
 
+Resolvers find the zones by iterating from a signed local root (a second responder at .11, `zones/root/`), with root hints and the root key as their only trust anchor: the same delegation path as in the wild.
+Responder logs: `logs/queries.jsonl` (zones) and `logs/root-queries.jsonl` (root).
+Lab-only exemptions from resolver defaults (Knot answers `.test` itself unless told not to; PowerDNS won't query private addresses) are listed in [FINDINGS.md](FINDINGS.md) INFRA.8.
+
 Experiments are defined in `experiments/catalog.py` and listed in [experiments/CATALOG.md](experiments/CATALOG.md)
 (regenerate with `venv/bin/python -m experiments catalog`). Each run writes `results/<UTC time>/`.
 Interesting observations are logged in [FINDINGS.md](FINDINGS.md).

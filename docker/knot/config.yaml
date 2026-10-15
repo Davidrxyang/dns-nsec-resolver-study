@@ -1,5 +1,6 @@
-# Knot Resolver 6 in the local pipeline: client -> knot (172.30.0.21) -> responder (172.30.0.10).
-# Mirrors docker/bind/named.conf: same zones, same trust anchors, defaults otherwise.
+# Knot Resolver 6 in the local pipeline:
+#   client -> knot (172.30.0.21) -> local root (172.30.0.11) -> responder (172.30.0.10).
+# Zones are reached by ordinary delegation from the lab's signed root (FINDINGS INFRA.8).
 # Image: cznic/knot-resolver v6.5.0 (package 6.5.0.dev1+928fe2-cznic.1), pinned by digest in compose.yml.
 
 workers: 2                        # the image's default
@@ -16,26 +17,22 @@ views:
   - subnets: [ 172.30.0.0/24, 127.0.0.1 ]
     answer: allow
 
-# One zone-format file per zone, converted from zones/*.anchor by docker/pipeline.sh up.
-# read-only: no RFC 5011 updates written back.
+# The lab root's key (converted by docker/pipeline.sh up); read-only: no RFC 5011 updates.
 dnssec:
   trust-anchors-files:
-    - { file: /etc/knot-resolver/zones/nsec.test.dnskey,       read-only: true }
-    - { file: /etc/knot-resolver/zones/nsec3.test.dnskey,      read-only: true }
-    - { file: /etc/knot-resolver/zones/minnsec.test.dnskey,    read-only: true }
-    - { file: /etc/knot-resolver/zones/minnsec3.test.dnskey,   read-only: true }
-    - { file: /etc/knot-resolver/zones/cdoe-nsec.test.dnskey,  read-only: true }
-    - { file: /etc/knot-resolver/zones/cdoe-nsec3.test.dnskey, read-only: true }
-
-# Each variant zone goes straight to the responder as an authoritative server
-# (Knot's equivalent of BIND's static-stub), validated locally.
-forward:
-  - { subtree: nsec.test,       servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
-  - { subtree: nsec3.test,      servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
-  - { subtree: minnsec.test,    servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
-  - { subtree: minnsec3.test,   servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
-  - { subtree: cdoe-nsec.test,  servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
-  - { subtree: cdoe-nsec3.test, servers: [ 172.30.0.10 ], options: { authoritative: true, dnssec: true } }
+    - { file: /etc/knot-resolver/zones/root/root.dnskey, read-only: true }
 
 logging:
   level: info
+
+# Root hints: Knot 6's YAML has no root-hints option, so use its Lua escape hatch
+# (appended to the generated config; checked with `kresctl convert`).
+lua:
+  script: |
+    modules.load('hints > iterate')   -- not loaded by default in Knot 6
+    hints.root({['a.root.lab.'] = '172.30.0.11'})
+    -- Knot answers special-use names (RFC 6761) itself: every .test name got a
+    -- local empty-zone NXDOMAIN (SOA localhost. nobody.invalid.) with AD set.
+    -- PASS lets .test resolve normally, through the lab root.
+    -- Lab-only (FINDINGS ALL.9, INFRA.8): not needed for a real domain.
+    policy.add(policy.suffix(policy.PASS, policy.todnames({'test.'})))

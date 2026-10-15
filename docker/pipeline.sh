@@ -22,15 +22,15 @@ up() {
     # host user owns is not writable by it, and Docker would create a
     # missing one as root.
     mkdir -p logs/bind && chmod 777 logs/bind
-    # Write every zone's trust anchor before BIND starts and includes them.
+    # Keys and anchors first, so the root zone can carry the variant zones' DS
+    # records and every resolver can be given the root key (INFRA.8).
     $DC build responder || exit 1
     $DC run --rm --no-deps responder --addr 0.0.0.0 --port 53 --anchors-only || exit 1
-    # Knot wants zone-format trust anchors (one DNSKEY line per file).
-    for f in zones/*.anchor; do
-        sed -nE 's/^[[:space:]]*([^[:space:]]+) static-key ([0-9]+) ([0-9]+) ([0-9]+) "([^"]+)";.*/\1 300 IN DNSKEY \2 \3 \4 \5/p' \
-            "$f" > "${f%.anchor}.dnskey"
-    done
-    # PowerDNS wants DS records (RDATA only) in YAML; derive them with BIND's dnssec-dsfromkey.
+    to_dnskey zones/*.anchor
+    root_zone
+    $DC run --rm --no-deps root --addr 0.0.0.0 --port 53 --zone-dir /app/zones/root \
+        --log /app/logs/root-queries.jsonl --anchors-only || exit 1
+    to_dnskey zones/root/root.anchor
     pdns_anchors
     $DC up -d --build || exit 1
     for r in $RESOLVERS; do
@@ -43,19 +43,37 @@ up() {
     echo "pipeline up"
 }
 
-pdns_anchors() {
-    local out=docker/pdns/recursor.d/anchors.yml img
-    img=$(sed -nE 's/^[[:space:]]+(internetsystemsconsortium\/bind9@sha256:[0-9a-f]+).*/\1/p' compose.yml | head -1)
+BIND_IMG=$(sed -nE 's/^[[:space:]]+(internetsystemsconsortium\/bind9@sha256:[0-9a-f]+).*/\1/p' compose.yml | head -1)
+
+to_dnskey() {  # BIND-syntax anchors -> zone-format DNSKEY files (Knot; DS computation)
+    for f in "$@"; do
+        sed -nE 's/^[[:space:]]*([^[:space:]]+) static-key ([0-9]+) ([0-9]+) ([0-9]+) "([^"]+)";.*/\1 300 IN DNSKEY \2 \3 \4 \5/p' \
+            "$f" > "${f%.anchor}.dnskey"
+    done
+}
+
+ds_of() {  # ds_of <dnskey file> <zone>: DS RDATA (SHA-256) via BIND's dnssec-dsfromkey
+    docker run --rm -v "$PWD/zones:/z:ro" --entrypoint dnssec-dsfromkey "$BIND_IMG" -2 -f "/z/${1#zones/}" "$2" \
+        | awk '{print $4, $5, $6, $7}'
+}
+
+root_zone() {  # zones/root/root.zone = template + a DS per variant zone
     {
-        echo "# Generated from zones/*.dnskey by docker/pipeline.sh up; do not edit."
-        echo "dnssec:"
-        echo "  trustanchors:"
+        cat zones/root/root.zone.in
         for f in zones/*.dnskey; do
             z=$(basename "$f" .dnskey)
-            ds=$(docker run --rm -v "$PWD/zones:/z:ro" --entrypoint dnssec-dsfromkey "$img" -2 -f "/z/$z.dnskey" "$z" | awk '{print $4, $5, $6, $7}')
-            echo "    - { name: $z, dsrecords: ['$ds'] }"
+            echo "$z.  DS  $(ds_of "$f" "$z")"
         done
-    } > "$out"
+    } > zones/root/root.zone
+}
+
+pdns_anchors() {  # PowerDNS takes DS RDATA in YAML: only the local root's key
+    {
+        echo "# Generated from zones/root/root.dnskey by docker/pipeline.sh up; do not edit."
+        echo "dnssec:"
+        echo "  trustanchors:"
+        echo "    - { name: '.', dsrecords: ['$(ds_of zones/root/root.dnskey .)'] }"
+    } > docker/pdns/recursor.d/anchors.yml
 }
 
 fail=0
@@ -98,8 +116,6 @@ checks() {
         check "$r 5 same-gap name: validated (ad)"        "$out" 'flags: qr rd ra ad;'
         if [ "$(seen "$b" "$ip")" -eq 0 ]; then
             echo "OBS   $r 5 ANC: synthesized $b from the cached NSEC (responder saw nothing)"
-        elif [ "$r" = pdns ]; then
-            echo "OBS   $r 5 no ANC: expected in this lab, PowerDNS skips its aggressive cache for forward_zones"
         else
             echo "OBS   $r 5 no ANC: asked the responder for $b"
         fi

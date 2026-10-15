@@ -288,13 +288,14 @@ def nsec3_same_gap(suffix, count=2, prefix="r"):
     method="flush; two labels chosen so their hashes share one NSEC3 gap; <l1>.nsec3.test A (prime); <l2>.nsec3.test A.",
     expected="Upstream: BIND synthesizes from NSEC only; NSEC3 synthesis is 'planned for the future'. RFC 8198 §5.2 would allow it.",
     sources=f"{BIND_ARM}; {RFC8198} §5.2",
-    expected_by={"knot": 'Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot\'s docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.'},
+    expected_by={"knot": 'Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot\'s docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.',
+                 "pdns": "Synthesized: PowerDNS caches NSEC3 aggressively when a record covers more than 1/aggressive_cache_min_nsec3_hit_ratio (default 2000) of the hash space; our 9-record zone's spans are about 1/9."},
 )
 def n3_01(ctx):
     l1, l2 = nsec3_same_gap("nsec3.test.")
     ctx.probe(f"{l1}.nsec3.test.")
     b = ctx.probe(f"{l2}.nsec3.test.")
-    return synth_outcome(b, ctx.expect(False, knot=None)) + (f"rcode {b.rcode}, AD {b.ad}",)
+    return synth_outcome(b, ctx.expect(False, knot=None, pdns=True)) + (f"rcode {b.rcode}, AD {b.ad}",)
 
 
 @experiment(
@@ -303,12 +304,13 @@ def n3_01(ctx):
     method="flush; www.nsec3.test AAAA (prime); www.nsec3.test MX.",
     expected="Upstream (no NSEC3 synthesis in BIND).",
     sources=f"{BIND_ARM}; {RFC8198} §5.2",
-    expected_by={"knot": 'Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot\'s docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.'},
+    expected_by={"knot": 'Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot\'s docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.',
+                 "pdns": "Synthesized: PowerDNS caches NSEC3 aggressively when a record covers more than 1/aggressive_cache_min_nsec3_hit_ratio (default 2000) of the hash space; our 9-record zone's spans are about 1/9."},
 )
 def n3_03(ctx):
     ctx.probe("www.nsec3.test.", "AAAA")
     b = ctx.probe("www.nsec3.test.", "MX")
-    return synth_outcome(b, ctx.expect(False, knot=None)) + (f"rcode {b.rcode}, AD {b.ad}",)
+    return synth_outcome(b, ctx.expect(False, knot=None, pdns=True)) + (f"rcode {b.rcode}, AD {b.ad}",)
 
 
 @experiment(
@@ -317,13 +319,14 @@ def n3_03(ctx):
     method="flush; two labels whose <label>.wild.nsec3.test hashes share one NSEC3 gap; query both, A.",
     expected="Upstream (no NSEC3-based wildcard synthesis in BIND). RFC 8198 §5.3 would allow it.",
     sources=f"{BIND_ARM}; {RFC8198} §5.3",
-    expected_by={"knot": 'Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot\'s docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.'},
+    expected_by={"knot": 'Unknown (observation): RFC 8198 §5.2 allows NSEC3 synthesis; Knot\'s docs say only "aggressive caching for DNSSEC-validated data" without restricting it to NSEC.',
+                 "pdns": "Synthesized: PowerDNS caches NSEC3 aggressively when a record covers more than 1/aggressive_cache_min_nsec3_hit_ratio (default 2000) of the hash space; our 9-record zone's spans are about 1/9."},
 )
 def n3_06(ctx):
     l1, l2 = nsec3_same_gap("wild.nsec3.test.")
     ctx.probe(f"{l1}.wild.nsec3.test.")
     b = ctx.probe(f"{l2}.wild.nsec3.test.")
-    return synth_outcome(b, ctx.expect(False, knot=None)) + (f"rcode {b.rcode}, AD {b.ad}, answers {[r['type'] for r in b.answer]}",)
+    return synth_outcome(b, ctx.expect(False, knot=None, pdns=True)) + (f"rcode {b.rcode}, AD {b.ad}, answers {[r['type'] for r in b.answer]}",)
 
 
 # --- online variants (docs/VARIANTS.md) -------------------------------------
@@ -355,13 +358,14 @@ def mn_01(ctx):
     method="flush; m<tag>a.minnsec.test A (prime); sub.m<tag>a.minnsec.test A.",
     expected="Synthesized (the cached cover and wildcard cover prove it). Depends on D14; with cover_next='child' the span would not reach sub.m<tag>a.",
     sources=f"{RFC8198} §5.1; {RFC4470} erratum 6734; docs/VARIANTS.md D14",
-    expected_by={"knot": "Upstream: Knot's release notes (4.1.0, 2019) say aggressive caching is disabled for minimal ranges (CLAUDE.md §6); not re-verified for 6.x."},
+    expected_by={"knot": "Upstream: Knot's release notes (4.1.0, 2019) say aggressive caching is disabled for minimal ranges (CLAUDE.md §6); not re-verified for 6.x.",
+                 "pdns": "Unknown (observation): note that PowerDNS's nothing_below_nxdomain=dnssec (RFC 8020) answers names below a validated NXDOMAIN without NSEC synthesis, so a 'synthesized' outcome here does not show synthesis from minimal NSEC."},
 )
 def mn_02(ctx):
     base = ctx.label("m") + "a.minnsec.test."
     ctx.probe(base)
     b = ctx.probe("sub." + base)
-    return synth_outcome(b, ctx.expect(True, knot=False)) + (rcode_ad(b),)
+    return synth_outcome(b, ctx.expect(True, knot=False, pdns=None)) + (rcode_ad(b),)
 
 
 @experiment(
