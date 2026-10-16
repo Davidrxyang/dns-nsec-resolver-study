@@ -43,6 +43,7 @@ Resolvers: BIND 9.20.29 · Knot Resolver 6.5.0 · Unbound 1.26.1 · PowerDNS Rec
 | [MINNSEC.1](FINDINGS.md#minnsec1-resolvers-mostly-keep-minimally-covering-nsec-out-of-synthesis-unbound-uses-it-for-nodata) | **Synthesis from minimal NSEC** | none (undocumented; not cached standalone) | none (documented) | **NODATA synthesized (MN-03, 5/5)**; MN-02 via RFC 8020 | none (MN-02 via RFC 8020) | why Unbound; BIND trigger |
 | [MINNSEC.2](FINDINGS.md#minnsec2-the-literal-rfc-4470-4-cover-is-rejected-by-some-validators-and-accepted-by-others) | Literal RFC 4470 §4 cover (`\000.q`): validators split | delv ✗; drill ✓ | — | — | — | `cover_next=child` on all |
 | [MINNSEC.3](FINDINGS.md#minnsec3-drill-rejects-every-minimal-nsec-ent-proof) | drill rejects every minimal-NSEC ENT proof | accepts | accepts | accepts | accepts | — |
+| [MINNSEC.4](FINDINGS.md#minnsec4-resolvers-recognize-minimal-nsec-by-its-shape-a-heuristic) | **Minimal NSEC recognized by name shape** (heuristic) | unknown | zero byte in next-name label; NSEC3 hash+1 | none (no filter) | next = `\000.`owner only | encoding knob
 
 ## WL: NSEC3 white lies (RFC 7129 App. B)
 
@@ -75,7 +76,8 @@ Resolvers: BIND 9.20.29 · Knot Resolver 6.5.0 · Unbound 1.26.1 · PowerDNS Rec
 ## Where resolvers differ so far
 
 - **NSEC3.1:** Knot and PowerDNS synthesize from NSEC3; BIND and Unbound never do.
-- **MINNSEC.1:** only Unbound synthesizes from a minimal NSEC (NODATA at an existing name); the others keep minimal NSEC out of synthesis.
+- **MINNSEC.1:** only Unbound synthesizes from a minimal NSEC (NODATA at an existing name); the others keep minimal NSEC out of synthesis, because online-signed bitmaps are untrusted. This exposes Unbound to wrong bitmaps (inferred, not observed).
+- **MINNSEC.4:** Knot and PowerDNS recognize minimal NSEC by different name-shape rules; misses, not false positives, are the risk.
 - **ALL.4:** all four synthesize for CD=1 queries; BIND, PowerDNS and Unbound set AD, Knot clears it.
 - **ALL.5:** deep-name query patterns differ: BIND minimises with NS and falls back to the full name; PowerDNS and Unbound minimise with A and stop at the NXDOMAIN (RFC 8020); Knot doesn't minimise below the cut.
 - **ALL.8:** Unbound never delivers SERVFAIL over UDP for a dead authority (discard-timeout); the others do.
@@ -88,7 +90,7 @@ Resolvers: BIND 9.20.29 · Knot Resolver 6.5.0 · Unbound 1.26.1 · PowerDNS Rec
 ## Leads, possibly publishable
 
 - **NSEC3.1:** NSEC3 synthesis splits resolvers two against two.
-- **MINNSEC.1:** Unbound alone synthesizes from minimal NSEC; BIND's exclusion is undocumented.
+- **MINNSEC.1 / MINNSEC.4:** Unbound alone synthesizes from minimal NSEC; the others filter by name shape, so behavior depends on the signer's encoding.
 - **ALL.8:** Unbound clients never see SERVFAIL over UDP when an authority is dead, only timeouts.
 - **MINNSEC.2:** validators split on the literal RFC 4470 form (erratum 6734).
 - **ALL.4:** CD=1 and AD.
@@ -99,6 +101,8 @@ Resolvers: BIND 9.20.29 · Knot Resolver 6.5.0 · Unbound 1.26.1 · PowerDNS Rec
 ## Open follow-ups
 
 - [ ] MINNSEC.1: why Unbound synthesizes NODATA from minimal NSEC and the others don't (source: Unbound `validator/val_neg.c`); BIND trigger experiment; separate RFC 8020 from synthesis for MN-02
+- [ ] MINNSEC.1: bad-bitmap knob (omit an existing type) to test Unbound's exposure
+- [ ] MINNSEC.4: encoding knob (`\000.www` vs `www\000`); BIND's detection rule from source
 - [ ] MINNSEC.2: run a `cover_next = "child"` zone through every resolver
 - [ ] NSEC.3 / MINNSEC.3: make the ENT-NODATA queries catalogue experiments
 - [ ] NSEC3.1: NSEC3 opt-out zone, NSEC3 TTL expiry, and NSEC3 wildcard synthesis (Knot variable, PowerDNS not seen)
