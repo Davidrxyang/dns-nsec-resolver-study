@@ -11,11 +11,11 @@ Resolvers: BIND 9.20.29 · Knot Resolver 6.5.0 · Unbound 1.26.1 · PowerDNS Rec
 | [ALL.1](FINDINGS.md#all1-every-resolver-validates-every-variant) | Every resolver validates all six variants | ✓ all AD | ✓ all AD | ✓ all AD | ✓ all AD | — |
 | [ALL.2](FINDINGS.md#all2-synthesized-answers-carry-the-remaining-ttl-and-synthesis-stops-at-expiry-and-at-the-edge-of-what-the-cache-proves) | Synthesis uses remaining TTL; stops at expiry and gap edges | ✓ | ✓ | ✓ | ✓ | — |
 | [ALL.3](FINDINGS.md#all3-the-clients-do-bit-does-not-affect-priming-or-synthesis) | Client DO bit doesn't affect priming or synthesis | ✓ | ✓ | ✓ | ✓ | — |
-| [ALL.4](FINDINGS.md#all4-resolvers-synthesize-even-when-the-client-sets-cd1-and-differ-on-ad) | Synthesis despite CD=1 (RFC 8198 App. A says no) | synth, **AD=1** | synth, **AD=0** | synth, **AD=1** | synth, **AD=1** | sources; RFC 6840 |
+| [ALL.4](FINDINGS.md#all4-resolvers-synthesize-even-when-the-client-sets-cd1-and-differ-on-ad) | Synthesis despite CD=1 (RFC 8198 App. A says no) | synth, **AD=1** | synth, **AD=0** | synth, **AD=1** | synth, **AD=1** | sources (intent) |
 | [ALL.5](FINDINGS.md#all5-the-upstream-query-pattern-for-a-deep-nonexistent-name-differs-by-resolver-and-by-routing) | Deep-name upstream pattern (delegation) | NS min., +NS AAAA, full name (4) | **no min.**, full name (2) | A min., **stops** (RFC 8020) (2) | A min., **stops** (RFC 8020) (2) | P05 strict |
 | [ALL.6](FINDINGS.md#all6-upstream-query-name-casing-0x20) | Upstream qname case randomization (0x20) | no | **yes** | no | no | — |
 | [ALL.7](FINDINGS.md#all7-resolver-initiated-upstream-queries) | Resolver-initiated upstream queries | none seen | `_ta-*` NULL (RFC 8145) | `_ta-*` **type A** (RFC 8145 says NULL) | none seen | — |
-| [ALL.8](FINDINGS.md#all8-time-to-servfail-when-the-authoritative-server-is-down) | SERVFAIL when the authority is down | > 5 s | < 30 s | **never over UDP** (discard-timeout); ~25 s internally | < 30 s | measure |
+| [ALL.8](FINDINGS.md#all8-time-to-servfail-when-the-authoritative-server-is-down) | Time to SERVFAIL when the authority is down | ~10 s | ~7 s | **never over UDP** (discard-timeout); ~25 s internally | ~2 s | repeat over UDP |
 | [ALL.9](FINDINGS.md#all9-resolvers-may-answer-test-names-themselves-rfc-6761-special-use-handling) | Answers `.test` itself (RFC 6761) | no | **yes, NXDOMAIN with AD** | **yes, NXDOMAIN with aa, no AD** | no | — |
 | [ALL.10](FINDINGS.md#all10-resolvers-may-refuse-to-query-nameservers-at-private-or-special-purpose-addresses) | Refuses to query private nameserver addresses by default | no | no | no | **yes** (`dont_query` incl. 172.16/12) | — |
 
@@ -24,7 +24,7 @@ Resolvers: BIND 9.20.29 · Knot Resolver 6.5.0 · Unbound 1.26.1 · PowerDNS Rec
 | ID | Finding | BIND | Knot | Unbound | PowerDNS | Next |
 |---|---|---|---|---|---|---|
 | [NSEC.1](FINDINGS.md#nsec1-aggressive-synthesis-covers-every-nsec-case-rfc-8198-allows) | Synthesizes every RFC 8198 NSEC case | ✓ all six | ✓ all six | ✓ all six | ✓ all six | — |
-| [NSEC.2](FINDINGS.md#nsec2-synthesized-names-leave-no-per-name-cache-entry) | Synthesized names leave no per-name cache entry | yes (1 dump) | — | **no**: message entry per synthesized name (1 dump) | — | repeat; Knot/PowerDNS cache dumps |
+| [NSEC.2](FINDINGS.md#nsec2-what-synthesis-stores-differs-bind-keeps-no-per-name-entry-unbound-does) | What synthesis stores (per-name entry?) | no entry (1 dump) | — | **message entry per synthesized name** (1 dump) | — | repeat; Knot/PowerDNS cache dumps |
 | [NSEC.3](FINDINGS.md#nsec3-validators-disagree-on-an-ent-nodata-proved-by-a-covering-nsec) | Validators split on ENT NODATA via covering NSEC (drill rejects) | accepts | accepts | accepts | accepts | catalogue experiment |
 
 ## NSEC3: Vanilla NSEC3
@@ -40,10 +40,10 @@ Resolvers: BIND 9.20.29 · Knot Resolver 6.5.0 · Unbound 1.26.1 · PowerDNS Rec
 
 | ID | Finding | BIND | Knot | Unbound | PowerDNS | Next |
 |---|---|---|---|---|---|---|
-| [MINNSEC.1](FINDINGS.md#minnsec1-resolvers-mostly-keep-minimally-covering-nsec-out-of-synthesis-unbound-uses-it-for-nodata) | **Synthesis from minimal NSEC** | none (undocumented; not cached standalone) | none (documented) | **NODATA synthesized (MN-03, 5/5)**; MN-02 via RFC 8020 | none (MN-02 via RFC 8020) | why Unbound; BIND trigger |
+| [MINNSEC.1](FINDINGS.md#minnsec1-resolvers-mostly-keep-minimally-covering-nsec-out-of-synthesis-unbound-uses-it-for-nodata) | **Synthesis from minimal NSEC** | none (source: `is_minimal_nsec`, `has_000_label`) | none (source; documented) | **NODATA synthesized (MN-03, 5/5)**; MN-02 via RFC 8020 | none (MN-02 via RFC 8020) | why Unbound; encoding knob |
 | [MINNSEC.2](FINDINGS.md#minnsec2-the-literal-rfc-4470-4-cover-is-rejected-by-some-validators-and-accepted-by-others) | Literal RFC 4470 §4 cover (`\000.q`): validators split | delv ✗; drill ✓ | — | — | — | `cover_next=child` on all |
 | [MINNSEC.3](FINDINGS.md#minnsec3-drill-rejects-every-minimal-nsec-ent-proof) | drill rejects every minimal-NSEC ENT proof | accepts | accepts | accepts | accepts | — |
-| [MINNSEC.4](FINDINGS.md#minnsec4-resolvers-recognize-minimal-nsec-by-its-shape-a-heuristic) | **Minimal NSEC recognized by name shape** (heuristic) | unknown | zero byte in next-name label; NSEC3 hash+1 | none (no filter) | next = `\000.`owner only | encoding knob
+| [MINNSEC.4](FINDINGS.md#minnsec4-resolvers-recognize-minimal-nsec-by-its-shape-a-heuristic) | **Minimal NSEC recognized by shape** (heuristic) | bitmap = `RRSIG NSEC`, or next starts with `\000` | zero byte in next-name label; NSEC3 hash+1 | none (no filter) | next = `\000.`owner only | encoding knob
 
 ## WL: NSEC3 white lies (RFC 7129 App. B)
 
@@ -56,7 +56,7 @@ Resolvers: BIND 9.20.29 · Knot Resolver 6.5.0 · Unbound 1.26.1 · PowerDNS Rec
 
 | ID | Finding | BIND | Knot | Unbound | PowerDNS | Next |
 |---|---|---|---|---|---|---|
-| [CDOE.1](FINDINGS.md#cdoe1-clients-see-noerror-for-nonexistent-names-and-no-resolver-sends-or-honors-co) | Clients see NOERROR; CO neither sent nor honored | NOERROR, no CO | NOERROR, no CO | NOERROR, no CO | NOERROR, no CO | CO-aware resolver |
+| [CDOE.1](FINDINGS.md#cdoe1-clients-see-noerror-for-nonexistent-names-and-no-resolver-sends-or-honors-co) | Clients see NOERROR; CO neither sent nor honored | NOERROR, no CO | NOERROR, no CO | NOERROR, no CO | NOERROR, no CO | CO-aware resolver; NXDOMAIN restoration (§5) |
 | [CDOE.2](FINDINGS.md#cdoe2-compact-answers-are-cached-per-name-and-never-synthesized-for-other-names) | Cached per name, never synthesized for other names | ✓ | ✓ | ✓ | ✓ | — |
 
 ## INFRA: Validators, responder, environment
@@ -77,8 +77,8 @@ Resolvers: BIND 9.20.29 · Knot Resolver 6.5.0 · Unbound 1.26.1 · PowerDNS Rec
 
 - **NSEC3.1:** Knot and PowerDNS synthesize from NSEC3; BIND and Unbound never do.
 - **MINNSEC.1:** only Unbound synthesizes from a minimal NSEC (NODATA at an existing name); the others keep minimal NSEC out of synthesis, because online-signed bitmaps are untrusted. This exposes Unbound to wrong bitmaps (inferred, not observed).
-- **MINNSEC.4:** Knot and PowerDNS recognize minimal NSEC by different name-shape rules; misses, not false positives, are the risk.
-- **ALL.4:** all four synthesize for CD=1 queries; BIND, PowerDNS and Unbound set AD, Knot clears it.
+- **MINNSEC.4:** BIND, Knot and PowerDNS recognize minimal NSEC by three different shape rules (BIND alone uses the bitmap); misses, not false positives, are the risk.
+- **ALL.4:** all four synthesize for CD=1 queries; BIND, PowerDNS and Unbound set AD, Knot clears it. Both conform to RFC 4035/6840, which tie AD to authenticity, not to CD.
 - **ALL.5:** deep-name query patterns differ: BIND minimises with NS and falls back to the full name; PowerDNS and Unbound minimise with A and stop at the NXDOMAIN (RFC 8020); Knot doesn't minimise below the cut.
 - **ALL.8:** Unbound never delivers SERVFAIL over UDP for a dead authority (discard-timeout); the others do.
 - **ALL.9:** Knot and Unbound answer `.test` themselves, Knot with AD, Unbound with aa and no AD.
@@ -90,7 +90,7 @@ Resolvers: BIND 9.20.29 · Knot Resolver 6.5.0 · Unbound 1.26.1 · PowerDNS Rec
 ## Leads, possibly publishable
 
 - **NSEC3.1:** NSEC3 synthesis splits resolvers two against two.
-- **MINNSEC.1 / MINNSEC.4:** Unbound alone synthesizes from minimal NSEC; the others filter by name shape, so behavior depends on the signer's encoding.
+- **MINNSEC.1 / MINNSEC.4:** Unbound alone synthesizes from minimal NSEC; the others filter by shape (BIND's filter is undocumented, found in source), so behavior depends on the signer's encoding.
 - **ALL.8:** Unbound clients never see SERVFAIL over UDP when an authority is dead, only timeouts.
 - **MINNSEC.2:** validators split on the literal RFC 4470 form (erratum 6734).
 - **ALL.4:** CD=1 and AD.
@@ -100,16 +100,18 @@ Resolvers: BIND 9.20.29 · Knot Resolver 6.5.0 · Unbound 1.26.1 · PowerDNS Rec
 
 ## Open follow-ups
 
-- [ ] MINNSEC.1: why Unbound synthesizes NODATA from minimal NSEC and the others don't (source: Unbound `validator/val_neg.c`); BIND trigger experiment; separate RFC 8020 from synthesis for MN-02
+- [ ] MINNSEC.1: why Unbound synthesizes NODATA from minimal NSEC and the others don't (source: Unbound `validator/val_neg.c`); separate RFC 8020 from synthesis for MN-02
 - [ ] MINNSEC.1: bad-bitmap knob (omit an existing type) to test Unbound's exposure
-- [ ] MINNSEC.4: encoding knob (`\000.www` vs `www\000`); BIND's detection rule from source
+- [x] MINNSEC.4: BIND's detection rule from source (`resolver.c`: `is_minimal_nsec`, `has_000_label`)
+- [ ] MINNSEC.4: encoding knob (`\000.www` vs `www\000`); predicted: BIND and PowerDNS synthesize MN-03 under `www\000`, Knot doesn't
 - [ ] MINNSEC.2: run a `cover_next = "child"` zone through every resolver
 - [ ] NSEC.3 / MINNSEC.3: make the ENT-NODATA queries catalogue experiments
 - [ ] NSEC3.1: NSEC3 opt-out zone, NSEC3 TTL expiry, and NSEC3 wildcard synthesis (Knot variable, PowerDNS not seen)
-- [ ] ALL.4: check sources; RFC 6840 reading of AD on CD=1
+- [x] ALL.4: RFC 4035/6840 reading of AD on CD=1 (both behaviors conform; recorded in ALL.4)
+- [ ] ALL.4: check sources for intent (synthesis despite RFC 8198 App. A; AD derivation)
 - [ ] ALL.5: P05 (strict QNAME minimisation)
 - [ ] ALL.7: confirm Unbound's `_ta-` qtype in its source
-- [ ] ALL.8: measure time to SERVFAIL per resolver; Unbound over TCP (connection closed at ~30 s)
+- [ ] ALL.8: repeat SERVFAIL timing over UDP with several runs (current numbers: one TCP query each); Unbound over TCP (connection closed at ~30 s)
 - [ ] NSEC.2: repeat cache-footprint observation; Knot and PowerDNS cache dumps
 - [ ] CDOE.1: find a CO-aware resolver
 - [ ] NSEC3.3: choose distinct-record names when building P03
