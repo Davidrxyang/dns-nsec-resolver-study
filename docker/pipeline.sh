@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local resolver pipeline: client -> resolvers (BIND, Knot, PowerDNS) -> responder (see compose.yml).
+# Local resolver pipeline: client -> resolvers (BIND, Knot, PowerDNS, Unbound) -> responder (see compose.yml).
 # Usage: docker/pipeline.sh up | check | experiments [args] | down
 set -u
 cd "$(dirname "$0")/.."
@@ -7,13 +7,16 @@ DC="docker compose"
 RLOG=logs/queries.jsonl
 
 # Resolvers under test: name, lab address, cache flush (same as experiments/harness.py).
-RESOLVERS="bind knot pdns"
-ip_of() { case $1 in bind) echo 172.30.0.20 ;; knot) echo 172.30.0.21 ;; pdns) echo 172.30.0.22 ;; esac; }
+RESOLVERS="bind knot pdns unbound"
+ip_of() { case $1 in bind) echo 172.30.0.20 ;; knot) echo 172.30.0.21 ;; pdns) echo 172.30.0.22 ;; unbound) echo 172.30.0.23 ;; esac; }
 flush() {
     case $1 in
         bind) $DC exec -T bind rndc flush ;;
         knot) $DC exec -T knot kresctl cache clear >/dev/null ;;
         pdns) $DC exec -T pdns rec_control wipe-cache '.$' >/dev/null ;;
+        # reload empties the caches but keeps the infra cache (server RTT and
+        # reachability), so flush that too; otherwise a server once seen down stays down.
+        unbound) $DC exec -T unbound sh -c 'unbound-control reload && unbound-control flush_infra all' >/dev/null ;;
     esac
 }
 
@@ -133,11 +136,15 @@ checks() {
     # 6. Negative control: with the responder stopped, every resolver must fail
     # rather than answer. Flush first and use another gap (ns1 < p... < secure);
     # otherwise the cached insecure->ns1 NSEC would allow synthesis.
+    # Failing means SERVFAIL or no answer at all: Unbound drops the UDP reply to a
+    # recursion that takes longer than discard-timeout (1.9 s), so its SERVFAIL for
+    # a dead server never reaches the client (FINDINGS ALL.8).
     for r in $RESOLVERS; do flush $r; done
     $DC stop responder >/dev/null 2>&1
     for r in $RESOLVERS; do
         out=$($DC exec -T client dig @"$(ip_of $r)" +dnssec +time=30 +tries=1 "p${tag}${r}.nsec.test." A)
-        check "$r 6 negative control: responder stopped, correctly returns SERVFAIL" "$out" 'status: SERVFAIL'
+        check "$r 6 negative control: responder stopped, no data returned" "$out" 'status: SERVFAIL|timed out'
+        grep -q 'timed out' <<<"$out" && echo "OBS   $r 6 no answer within 30 s (no SERVFAIL sent)"
     done
     $DC start responder >/dev/null 2>&1
     exit $fail
@@ -148,5 +155,5 @@ case "${1:-}" in
     check) checks ;;
     experiments) shift; venv/bin/python -m experiments run "$@" ;;
     down) $DC down ;;
-    *) echo "usage: $0 up | check | experiments [--resolver bind|knot|pdns|all] [--only IDs] [--slow] | down"; exit 2 ;;
+    *) echo "usage: $0 up | check | experiments [--resolver bind|knot|pdns|unbound|all] [--only IDs] [--slow] | down"; exit 2 ;;
 esac

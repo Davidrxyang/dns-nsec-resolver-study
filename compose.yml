@@ -86,6 +86,19 @@ services:
       lab:
         ipv4_address: 172.30.0.22
 
+  unbound:
+    # Unbound 1.26.1, built from the signature-verified release tarball (docker/unbound/Dockerfile).
+    build: docker/unbound
+    image: dns-nsec-resolver-study-unbound
+    depends_on: [responder, root]
+    volumes:
+      - ./docker/unbound/unbound.conf:/etc/unbound/unbound.conf:ro
+      - ./docker/root.hints:/etc/unbound/root.hints:ro
+      - ./zones:/etc/unbound/zones:ro           # lab root anchor (zones/root/root.dnskey)
+    networks:
+      lab:
+        ipv4_address: 172.30.0.23
+
   client:
     image: *bind-image   # only for its dig
     init: true

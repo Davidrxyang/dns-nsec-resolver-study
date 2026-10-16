@@ -22,7 +22,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|---|
 | BIND | 9.20.29 | `internetsystemsconsortium/bind9@sha256:071465f8…41ad0` | 172.30.0.20 | `docker/bind/named.conf` (defaults + `synth-from-dnssec yes`) |
 | Knot Resolver | 6.5.0 (package `6.5.0.dev1+928fe2-cznic.1`, see INFRA.5) | `cznic/knot-resolver@sha256:b2422a58…49e0` | 172.30.0.21 | `docker/knot/config.yaml` (defaults, 2 workers) |
-| Unbound | not deployed | | | |
+| Unbound | 1.26.1 | built from the signed NLnet Labs release tarball on `alpine:3.24@sha256:294b683c…77e6` (no official image; INFRA.9) | 172.30.0.23 | `docker/unbound/unbound.conf` (defaults + logging + `local-zone: "test." nodefault`) |
 | PowerDNS Recursor | 5.4.7 | `powerdns/pdns-recursor-54@sha256:ec0ad7d6…eff8` | 172.30.0.22 | `docker/pdns/recursor.yml` (defaults + `dnssec.validation: validate`) |
 
 - **Setup (since run 20261015T191407Z):** every resolver reaches the six zones by **ordinary delegation** from a signed local root (172.30.0.11), with that root's key as its only trust anchor (INFRA.8). Earlier runs used a static-stub/forward per zone with per-zone anchors (INFRA.7).
@@ -42,7 +42,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Yes: AD on all six zones; NXDOMAIN for NSEC, NSEC3, minimal NSEC, white lies; NOERROR for both compact zones | diag | check 5b; CN-01, C3-01 |
 | Knot | Yes: identical to BIND | diag | check 5b; CN-01, C3-01 |
-| Unbound | — | — | |
+| Unbound | Yes: identical to the others (NXDOMAIN ×4, NOERROR ×2 compact, all AD) | diag | check 5b; CN-01, C3-01 (run RUNID) |
 | PowerDNS | Yes: identical to BIND and Knot (NXDOMAIN ×4, NOERROR ×2 compact, all AD) | diag | check 5b; CN-01, C3-01 |
 
 ### ALL.2 Synthesized answers carry the remaining TTL, and synthesis stops at expiry and at the edge of what the cache proves
@@ -53,7 +53,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Remaining TTL (60 → 50); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 |
 | Knot | Remaining TTL (60 → 49–50); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 |
-| Unbound | — | — | |
+| Unbound | Remaining TTL (60 → 50); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 (run RUNID) |
 | PowerDNS | Remaining TTL (60 → 49); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 (run 20261015T191407Z) |
 
 - **Note:** Knot clamps every cached TTL to at least 5 s (`cache.ttl-min` default), which matters only for TTL experiments below 5 s.
@@ -65,7 +65,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Irrelevant: validates and caches regardless; a DO=0 client gets SOA only | diag | N09, N10 |
 | Knot | Same as BIND | diag | N09, N10 |
-| Unbound | — | — | |
+| Unbound | Same as the others | diag | N09, N10 (run RUNID) |
 | PowerDNS | Same as BIND and Knot | diag | N09, N10 |
 
 - **Interpretation:** DO only shapes what the client is shown.
@@ -78,10 +78,10 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Synthesizes; answers with **AD=1** | diag (5+ runs) | N08 |
 | Knot | Synthesizes; answers with **AD=0** | diag | N08 |
-| Unbound | — | — | |
+| Unbound | Synthesizes; answers with **AD=1** (like BIND and PowerDNS) | diag | N08 (runs 20261016T153512Z, RUNID) |
 | PowerDNS | Synthesizes; answers with **AD=1** (like BIND) | diag | N08 |
 
-- **Interpretation:** both depart from the RFC's implementation note. AD on CD=1 answers is a separate question (RFC 6840 §5.7–5.9) where they disagree.
+- **Interpretation:** all four depart from the RFC's implementation note. AD on CD=1 answers is a separate question (RFC 6840 §5.7–5.9) where they disagree.
 - **Follow-up:** check BIND and Knot sources for intent; whether CD=1 also skips validation of upstream data.
 
 ### ALL.5 The upstream query pattern for a deep nonexistent name differs by resolver and by routing
@@ -92,7 +92,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Forwarding (static-stub): NS for `m<tag>`, DNSKEY, full name (3 upstream). **Delegation:** NS for `m<tag>`, AAAA for its own nameserver name `ns1.nsec.test` (no AAAA glue), DNSKEY, full name (4) | doc (ARM: relaxed mode "falls back to normal (non-minimized) query mode when it receives either NXDOMAIN") | N11 (runs 20261015T185519Z, 20261015T191407Z) |
 | Knot | Forwarding: DNSKEY, NS for `m<tag>`, full name (3). **Delegation:** DNSKEY, then the full name directly (2): no minimisation below the zone cut | diag | N11 (runs 20261015T185519Z, 20261015T191407Z) |
-| Unbound | — | — | |
+| Unbound | **Delegation:** `m<tag>` A, DNSKEY, then **stops** (2), the same pattern as PowerDNS: `harden-below-nxdomain` (RFC 8020, default yes) ends resolution at the validated NXDOMAIN | doc (unbound.conf: harden-below-nxdomain "returns NXDOMAIN to queries for a name below another name that is already known to be NXDOMAIN") | N11 (runs 20261016T153512Z, RUNID) |
 | PowerDNS | Forwarding: `m<tag>` **A**, DNSKEY, full name (3). **Delegation:** `m<tag>` A, DNSKEY, then **stops** (2): the validated NXDOMAIN ends resolution (`nothing_below_nxdomain: dnssec`, RFC 8020) | diag | N11 (runs 20261015T185519Z, 20261015T191407Z) |
 
 - **Interpretation:** the fallback ignores the resolver's own validated denial (RFC 8020 cut, RFC 8198).
@@ -107,7 +107,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | No: sends names as the client wrote them | diag | responder log |
 | Knot | **Yes**: e.g. `kNoT1a.NSec.TeSt.` | diag | responder log |
-| Unbound | — (has a `use-caps-for-id` option; default to be checked) | — | |
+| Unbound | No: 0 of 104 upstream queries mixed-case (`use-caps-for-id: no`, the default) | doc (unbound.conf) | responder log |
 | PowerDNS | No: case preserved (`outgoing.lowercase: false`); 0 of 128 upstream queries mixed-case | doc (yamlsettings) | responder log |
 
 - **Measurement impact:** match server-side logs case-insensitively (the harness does). An authority that doesn't echo case exactly would break 0x20 resolvers.
@@ -120,7 +120,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | None seen toward our zones beyond DNSKEY fetches | diag | responder log |
 | Knot | RFC 8145 trust-anchor signalling: `_ta-<keytag>.<zone>` type NULL per anchored zone, at startup, hourly with the anchor refresh, and after a cache purge | doc (RFC 8145) | responder log; startup log |
-| Unbound | — | — | |
+| Unbound | RFC 8145 signalling for its only anchor, the root: `_ta-fd99.` sent to the lab root at every start and `unbound-control reload` (34 in one session), but as **type A**, where RFC 8145 §5.1 specifies NULL (Knot sends NULL) | diag (`trust-anchor-signaling: yes` is documented; the qtype is not) | root log |
 | PowerDNS | None: 0 `_ta-*` queries in 128 upstream queries | diag | responder log |
 
 - **Measurement impact:** filter these from upstream counts. The harness ignores `_ta-*` names (`SELF_INITIATED`).
@@ -132,7 +132,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | More than 5 s: dig's first 5 s try got no reply | diag (one manual observation) | manual negative control |
 | Knot | SERVFAIL within 30 s (time not measured) | diag | check 6 |
-| Unbound | — | — | |
+| Unbound | **No SERVFAIL ever reaches a UDP client**: Unbound decides SERVFAIL after ~23–26 s (`all servers for this domain failed`), but `discard-timeout` (default 1900 ms) drops UDP replies to recursions that take longer. It doesn't cache that SERVFAIL, so each later retry starts a new ~24 s recursion and also gets no reply (6 tries over 60 s, all timed out). Over TCP the connection closed at ~30 s without an answer. Once its infra cache marks the server unreachable, SERVFAIL comes back within 1 s | doc (unbound.conf discard-timeout: "They receive no reply, the work item continues to recurse") | Unbound log (`log-servfail`); check 6; manual timing |
 | PowerDNS | SERVFAIL within 30 s (time not measured); EDE expected (`extended_resolution_errors: true`) | diag | check 6 |
 
 - **Measurement impact:** probe timeouts must exceed the resolver's own upstream retry time. `pipeline.sh check` uses `+time=30`.
@@ -145,7 +145,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | No: resolves `.test` through the configured root | diag | root log |
 | Knot | **Yes**: answers every `.test` name itself with a synthetic empty zone (`test. SOA localhost. nobody.invalid. …`), as **NXDOMAIN with AD set**, without asking the root. Hidden while a `forward` rule for each zone took precedence. Lab fix: `policy.add(policy.suffix(policy.PASS, policy.todnames({'test.'})))` in the Lua block (Knot policy docs: special-use rules "can be overridden by action policy.PASS") | diag | dig `foo.test`; root log (no queries until PASS) |
-| Unbound | — (documented to serve `test.` locally by default; needs `local-zone: "test." nodefault`) | — | |
+| Unbound | **Yes**: without an exemption, answers `.test` names itself (`test. SOA localhost. nobody.invalid. …`) as NXDOMAIN with **`aa` set and no AD**, without asking the root. Lab fix: `local-zone: "test." nodefault` | doc (unbound.conf: default local zones include `test`) | dig against a second instance without the exemption; root log (0 queries) |
 | PowerDNS | No: resolves `.test` through the configured root | diag | root log |
 
 - **Interpretation:** Knot marks locally invented NXDOMAINs as authenticated, which a client cannot tell apart from a DNSSEC-proven NXDOMAIN.
@@ -159,7 +159,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Queries the lab addresses with no configuration change | diag | root and responder logs |
 | Knot | Queries the lab addresses with no configuration change | diag | root and responder logs |
-| Unbound | — (documented: `do-not-query-localhost: yes` blocks only loopback; `private-address` is empty by default) | — | |
+| Unbound | Queries the lab addresses with no configuration change (`do-not-query-localhost` covers only loopback; `private-address` empty by default) | doc (unbound.conf) | root and responder logs |
 | PowerDNS | **No by default**: `outgoing.dont_query` defaults to RFC 1918, loopback, link-local, CGNAT and the documentation ranges, including 172.16.0.0/12. Lab exemption: the same list without 172.16.0.0/12. Forwarders (`forward_zones`) are exempt, so this only appeared with delegation | doc (default list) | `rec_control get-parameter outgoing.dont_query`; PowerDNS settings docs |
 
 - **Interpretation:** a hardening default (it stops a delegation from steering the resolver at internal hosts), and another way forwarding and delegation behave differently in PowerDNS (cf. INFRA.7). PowerDNS also refuses 192.0.2.0/24 even with the exemption, which only affects the deliberately unreachable glue of `secure.*` and `insecure.*` in our zones.
@@ -177,7 +177,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | All six synthesized, with AD | doc (ARM `synth-from-dnssec`) | N01, N03–N07 |
 | Knot | All six synthesized, with AD | doc (docs: "aggressive caching for DNSSEC-validated data") | N01, N03–N07 |
-| Unbound | — | — | |
+| Unbound | All six synthesized, with AD | doc (unbound.conf `aggressive-nsec`, default yes) | N01, N03–N07 (runs 20261016T153512Z, RUNID) |
 | PowerDNS | All six synthesized, with AD | doc (`dnssec.aggressive_nsec_cache_size`, RFC 8198) | N01, N03–N07 (run 20261015T191407Z) |
 
 ### NSEC.2 Synthesized names leave no per-name cache entry
@@ -187,7 +187,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | `rndc dumpdb -cache` after `m…a` (fetched) and `m…b` (synthesized): a negative entry for `m…a` with its proof attached, the NSECs as standalone validated records, **no entry for `m…b`** | diag (one dump) | cache dump |
 | Knot | — (no cache-dump method used yet) | — | |
-| Unbound | — | — | |
+| Unbound | **Differs from BIND**: after `k…a` (fetched) and `k…b` (synthesized), `unbound-control dump_cache` shows a message-cache entry for **both** names (TTL 59); the responder never saw `k…b` | diag (one dump) | cache dump |
 | PowerDNS | — (`rec_control dump-cache - a` shows the NSECs stored in its aggressive cache) | — | |
 
 - **Interpretation:** synthesis reads the cached NSEC each time. This is relevant to cache-pressure comparisons with the minimal variants.
@@ -201,13 +201,14 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | delv (BIND) | Accepts (`negative response, fully validated`) | diag | gates |
 | ldns drill 1.8.4 | **Rejects**: "wildcard not covered by the given NSEC RRs" | diag | tests/reference.py (`KNOWN_DRILL`) |
-| BIND resolver | — for `wild`; accepts the analogous `ent` (N04, AD) | diag | N04 |
-| Knot | — for `wild`; accepts `ent` (N04, AD) | diag | N04 |
-| Unbound | — (shares NLnet Labs lineage with ldns) | — | |
-| PowerDNS | — for `wild`; NODATA for `ent` validated (N04 prime, AD) | diag | N04 |
+| BIND resolver | Accepts `wild` and `ent` (NOERROR, AD) | diag | dig `wild.nsec.test A`; N04 |
+| Knot | Accepts `wild` and `ent` (NOERROR, AD) | diag | dig `wild.nsec.test A`; N04 |
+| Unbound | Accepts `wild` and `ent` (NOERROR, AD) | diag (one query each) | dig `wild.nsec.test A` |
+| PowerDNS | Accepts `wild` and `ent` (NOERROR, AD) | diag | dig `wild.nsec.test A`; N04 |
 
 - **Why `ent` passes in drill:** its proof NSEC (`nsec.test → host.ent`) happens to also cover `*.nsec.test`.
-- **Follow-up:** add `wild.nsec.test A` as an experiment on every resolver; check for an ldns bug report. The same limitation hits every ENT in the minimal-NSEC zone (MINNSEC.3).
+- **Result so far:** every resolver accepts; only drill rejects. So this is a drill limitation, not a resolver split.
+- **Follow-up:** make `wild.nsec.test A` a catalogue experiment; check for an ldns bug report. The same limitation hits every ENT in the minimal-NSEC zone (MINNSEC.3).
 
 ---
 
@@ -221,7 +222,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | **Never**: all three upstream | doc (ARM: synthesis "only from NSEC"; NSEC3 "planned for the future") | N3-01/03/06 |
 | Knot | **Yes** for NXDOMAIN and NODATA (N3-01, N3-03: every run). **Wildcard (N3-06) is variable**: synthesized in 3 of 9 runs; in failing runs the second probe first sends a minimisation query `wild.nsec3.test NS`, then the full name | diag | N3-01/03/06; runs 20261015T172911Z, 20261015T185519Z, 20261015T191407Z + 6 repeats |
-| Unbound | — | — | |
+| Unbound | **Never**: all three upstream (like BIND) | doc (unbound.conf: aggressive-nsec uses "the DNSSEC NSEC chain"; NSEC3 not mentioned) | N3-01/03/06 (runs 20261016T153512Z, RUNID) |
 | PowerDNS | **Yes** for NXDOMAIN and NODATA (N3-01, N3-03); **no** for the wildcard (N3-06, 1 run) | doc (aggressive NSEC3 with `aggressive_cache_min_nsec3_hit_ratio` 2000; our spans ≈ 1/9) | N3-01/03/06 (run 20261015T191407Z) |
 
 - **Interpretation:** the clearest resolver difference so far: BIND never synthesizes from NSEC3, Knot and PowerDNS do (NXDOMAIN and NODATA). On Knot and PowerDNS the NSEC3 variants are distinguishable by synthesis (vanilla synthesized; white lies and compact not, WL.2 and CDOE.2). On BIND they cannot be. The NSEC3 wildcard case is unreliable (Knot variable, PowerDNS not in one run).
@@ -245,7 +246,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 
 ## MINNSEC. Minimally covering NSEC (`minnsec.test`, RFC 4470)
 
-### MINNSEC.1 No resolver synthesizes from minimally covering NSEC
+### MINNSEC.1 Resolvers mostly keep minimally covering NSEC out of synthesis; Unbound uses it for NODATA
 - **Question:** RFC 8198 §5.1 would allow synthesis wherever a cached record proves the answer. Minimal covers span only one name, but the NSEC at an existing name lists every type there, and a cover spans the denied name's whole subtree (D14).
 - **Experiments:** MN-01 (adjacent name; never provable), MN-02 (name below a cached NXDOMAIN; provable), MN-03 (NODATA, other type; provable). Vanilla counterparts: N01, N05, N03.
 
@@ -253,10 +254,10 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | **None synthesized**, even where provable (MN-02, MN-03). Cause: `rndc dumpdb -cache` shows minimal NSECs only attached to negative entries, never as standalone records, whereas vanilla NSECs are stored standalone too | diag (3+ runs); **undocumented** (no ISC source found, 2026-10-14) | MN-01/02/03; cache dump |
 | Knot | None synthesized | doc (Knot 4.1.0 release notes: aggressive caching disabled for minimal ranges; not re-verified for 6.x) | MN-01/02/03 |
-| Unbound | — | — | |
+| Unbound | **Synthesizes the NODATA (MN-03)**: after `www AAAA`, `www MX` is answered with AD and no upstream query, from the online-signed NSEC at `www` (full bitmap, next `www\000`). The only resolver to use a minimal NSEC this way. MN-02 also answered locally, but `harden-below-nxdomain` (RFC 8020) explains it without NSEC synthesis. MN-01 upstream (never provable) | diag | MN-01/02/03 (runs 20261016T153512Z, RUNID, + repeats) |
 | PowerDNS | No synthesis from minimal NSEC NODATA (MN-03 upstream). MN-02 (name below a minimal NXDOMAIN) was answered without the responder, most likely by its RFC 8020 rule (`nothing_below_nxdomain: dnssec`), not NSEC synthesis | diag | MN-01/02/03 (run 20261015T191407Z) |
 
-- **Interpretation:** both resolvers so far keep minimal NSEC out of aggressive negative caching, Knot by design and BIND silently. This bears on CLAUDE.md's open question of whether BIND recognizes minimally covering NSEC.
+- **Interpretation:** BIND, Knot and PowerDNS keep minimal NSEC out of synthesis (Knot by design, BIND silently, PowerDNS at least for NODATA). Unbound uses the NSEC at an existing name for NODATA synthesis, which RFC 8198 §5.1 allows: the record is valid and its bitmap is complete. So a minimal-NSEC zone gets measurably fewer upstream queries through Unbound only. This bears on CLAUDE.md's open question of whether BIND recognizes minimally covering NSEC.
 - **Follow-up:** a discriminating experiment with responder knobs (which property triggers BIND: next name below the owner, owner not a real name, span width, `\000` labels?); BIND source (`lib/dns/qpcache.c`, `nsec.c`).
 
 ### MINNSEC.2 The literal RFC 4470 §4 cover is rejected by some validators and accepted by others
@@ -282,7 +283,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | delv (BIND) | Accepts `ent` and `wild` | diag | gates |
 | ldns drill 1.8.4 | Rejects both ("wildcard not covered") | diag | tests/reference.py (`KNOWN_DRILL`) |
-| BIND, Knot, PowerDNS, Unbound | — (ENT queries in `minnsec.test` not yet run through resolvers) | — | |
+| BIND, Knot, PowerDNS, Unbound | All accept `ent.minnsec.test A` and `wild.minnsec.test A` (NOERROR, AD) | diag (one query each) | dig, 2026-10-16 |
 
 ---
 
@@ -304,7 +305,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Upstream (no NSEC3 synthesis at all, NSEC3.1) | doc | WL-01 |
 | Knot | Upstream, **although Knot synthesizes from vanilla NSEC3** (NSEC3.1): each record covers only one hash | diag | WL-01 |
-| Unbound | — | — | |
+| Unbound | Upstream (no NSEC3 synthesis at all, NSEC3.1) | doc | WL-01 (run RUNID) |
 | PowerDNS | Upstream, consistent with its documented filter (Recursor ≥ 4.9.0 keeps "NSEC3 entries which cover only a small fraction of possible names" out of its aggressive cache), although with 1-hash spans no resolver could synthesize anyway | diag | WL-01 (run 20261015T191407Z) |
 
 - **Follow-up:** PowerDNS is the resolver documented to detect this case explicitly.
@@ -321,7 +322,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | NOERROR with AD for both zones. With CO from the client: still NOERROR, CO not echoed, no CO upstream | diag (consistent with INFRA.4: compact support is dig-only) | CN-01/02, C3-01 |
 | Knot | Same as BIND | diag (Knot docs don't mention CO or RFC 9824) | CN-01/02, C3-01 |
-| Unbound | — | — | |
+| Unbound | Same as the others: NOERROR with AD; with CO, still NOERROR, no CO echoed or sent upstream | diag (unbound.conf doesn't mention CO or RFC 9824) | CN-01/02, C3-01 (run RUNID) |
 | PowerDNS | Same as BIND and Knot: NOERROR with AD; with CO, still NOERROR, no CO echoed or sent upstream | diag (no CO/RFC 9824 in its docs) | CN-01/02, C3-01 |
 
 - **Interpretation:** for users of these resolvers, compact denial turns every nonexistent name into NOERROR/NODATA. That matters for software that branches on NXDOMAIN (e.g. the DMARC "np" issue, CLAUDE.md §6).
@@ -334,7 +335,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Same name from cache; all others upstream | doc (RFC 9824 §6: RFC 8198 and RFC 8020 not supported) | CN-03/04/05, C3-02 |
 | Knot | Same as BIND (including C3-02, although Knot synthesizes from vanilla NSEC3) | diag | CN-03/04/05, C3-02 |
-| Unbound | — | — | |
+| Unbound | Same as the others | diag | CN-03/04/05, C3-02 (run RUNID) |
 | PowerDNS | Same as BIND and Knot | diag | CN-03/04/05, C3-02 |
 
 ---
@@ -407,10 +408,20 @@ Every observation worth revisiting, organized for comparison across resolvers. O
   | PowerDNS | `outgoing.dont_query` = default list without 172.16.0.0/12 in `docker/pdns/recursor.yml` | the default refuses to query private addresses, which include the lab network (ALL.10) | no: public addresses |
   | PowerDNS | `dnssec.validation: validate` instead of the default `process` | validate every answer, like BIND and Knot | a choice: keep it, and record it |
   | BIND | none beyond hints and anchor (`.test` and private addresses work by default) | | |
-  | Unbound (planned) | `local-zone: "test." nodefault` | documented to answer `.test` locally (ALL.9) | no |
+  | Unbound | `local-zone: "test." nodefault` in `docker/unbound/unbound.conf` | answers `.test` itself with an `aa` NXDOMAIN (ALL.9) | no: real domains aren't special-use |
+  | Unbound | logging (`log-queries`, `log-replies`, `log-servfail`, `val-log-level: 2`) and `unbound-control` on localhost | observation only; no resolution behavior changes | a choice: keep it |
 
 - **Zone files:** `ns1 A` changed from 127.0.0.1 to 172.30.0.10, because delegation-following resolvers use it.
 - **Effect:** PowerDNS's aggressive caching became measurable (INFRA.7). The routing change also altered other behavior (ALL.5, ALL.9, ALL.10), confirming that routing was a confounder.
+
+### INFRA.9 Unbound: built from source, and its cache flush needs two commands
+- **Status:** diag (environment), 2026-10-16.
+- **Image:** NLnet Labs publishes no official Docker image, so `docker/unbound/Dockerfile` builds 1.26.1 from the release tarball.
+  - Tarball signature verified on the host: "Good signature" from "NLnet Labs releases signing key G2 <releases@nlnetlabs.nl>", fingerprint `2310 1869 0C4D 903E F419 146A A144 323D EAAC DF45`, matching https://nlnetlabs.nl/signing-keys/ (key in use since 2026-01-01).
+  - The build re-checks the verified SHA-256 `35a6dc0e…af1503`; base `alpine:3.24` (3.24.2) pinned by digest.
+  - `unbound -V`: 1.26.1, `--prefix=/usr --sysconfdir=/etc --with-libevent`, OpenSSL 3.5.9, libevent 2.1.13; modules dns64 respip validator iterator. No dnstap.
+- **Flush:** `unbound-control reload` "flushes the cache" (unbound-control(8)) but **keeps the infra cache** (server RTT, timeouts, reachability): `dump_infra` is unchanged after a reload. After the negative control, the responder stayed marked as unreachable (`rto 51200`) and later queries failed fast. The lab flush is therefore `reload` + `flush_infra all` (harness and `pipeline.sh`).
+- **Implication:** "flush" means different things per resolver. Experiments that depend on server selection or timeouts must state which caches were emptied.
 
 ---
 

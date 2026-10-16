@@ -49,6 +49,12 @@ RESOLVERS = {
     "pdns": Resolver("pdns", "172.30.0.22",
                      ("exec", "-T", "pdns", "rec_control", "wipe-cache", ".$"),
                      ("exec", "-T", "pdns", "pdns_recursor", "--version")),
+    # reload "flushes the cache and reads the config file fresh" (unbound-control(8)),
+    # but keeps the infra cache (server RTT and reachability): flush that too (INFRA.9).
+    "unbound": Resolver("unbound", "172.30.0.23",
+                        ("exec", "-T", "unbound", "sh", "-c",
+                         "unbound-control reload && unbound-control flush_infra all"),
+                        ("exec", "-T", "unbound", "unbound", "-V")),
     # Before the lab root (INFRA.8), PowerDNS reached the zones via forward_zones and
     # could not synthesize at all (INFRA.7): set anc_in_lab=False for any resolver
     # that must use forwarding, so its ANC results are reported as lab artifacts.

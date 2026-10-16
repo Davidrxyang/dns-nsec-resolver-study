@@ -70,7 +70,7 @@ def catalog(_args):
         "# Experiment catalog",
         "",
         "Generated from `experiments/catalog.py` by `venv/bin/python -m experiments catalog`; edit that file, not this one.",
-        "Zones: see the ID prefixes in `experiments/catalog.py`. Resolvers: BIND, Knot Resolver and PowerDNS Recursor in the local Docker pipeline (`run --resolver bind|knot|pdns|all`). Results are diagnostics, written to `results/<time>/` (gitignored).",
+        "Zones: see the ID prefixes in `experiments/catalog.py`. Resolvers: BIND, Knot Resolver, PowerDNS Recursor and Unbound in the local Docker pipeline (`run --resolver bind|knot|pdns|unbound|all`). Results are diagnostics, written to `results/<time>/` (gitignored).",
         "",
         "Expected applies to every resolver unless a resolver-specific expectation is listed. ANC experiments are reported as lab artifacts for resolvers whose lab routing disables aggressive caching (see `RESOLVERS` in experiments/harness.py).",
         "",

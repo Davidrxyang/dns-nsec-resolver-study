@@ -128,7 +128,7 @@ Each entry gives what was decided, why, and what the standards say.
 ## Behavior observed so far
 
 Per-resolver details are in FINDINGS.md (grouped by variant) and the matrix in FINDINGS-INDEX.md:
-- **Validation:** BIND 9.20.29, Knot 6.5.0 and PowerDNS Recursor 5.4.7 validate all six variants (ALL.1). All reach the zones by delegation from a local signed root (INFRA.8).
-- **Synthesis:** all three synthesize from vanilla NSEC (NSEC.1). Knot and PowerDNS synthesize from vanilla NSEC3; BIND never does (NSEC3.1). None synthesizes from minimal NSEC, white lies or compact denial (MINNSEC.1, WL.2, CDOE.2). BIND's exclusion of minimal NSEC is undocumented; PowerDNS answers names below a minimal NXDOMAIN via RFC 8020 instead.
+- **Validation:** BIND 9.20.29, Knot 6.5.0, PowerDNS Recursor 5.4.7 and Unbound 1.26.1 validate all six variants (ALL.1). All reach the zones by delegation from a local signed root (INFRA.8).
+- **Synthesis:** all four synthesize from vanilla NSEC (NSEC.1). Knot and PowerDNS synthesize from vanilla NSEC3; BIND and Unbound never do (NSEC3.1). None synthesizes from white lies or compact denial (WL.2, CDOE.2). For minimal NSEC, only Unbound synthesizes, and only the NODATA at an existing name (MINNSEC.1); BIND's exclusion is undocumented, and PowerDNS and Unbound answer names below a minimal NXDOMAIN via RFC 8020.
 - **Compact denial:** no resolver sends or honors CO, so clients see NOERROR for compact-denied names (CDOE.1).
 - **Validators:** drill 1.8.4 rejects ENT NODATA proofs by covering NSEC, a known limitation (NSEC.3, MINNSEC.3). The literal RFC 4470 §4 cover form is rejected by delv/BIND and accepted by drill (MINNSEC.2; D14).

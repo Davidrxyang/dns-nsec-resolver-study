@@ -263,7 +263,7 @@ Shape: one NSEC owned by the QNAME itself, next name `\000.` + QNAME, bitmap `RR
     - So pin an exact 9.20.x, at or above 9.20.26, and record `named -V`.
   - **Sources:** https://bind9.readthedocs.io/en/stable/notes.html, https://downloads.isc.org/isc/bind9/9.18.41/doc/arm/html/notes.html, https://bind9.readthedocs.io/en/v9_18_1/notes.html, https://bind9.readthedocs.io/en/stable/_sources/reference.rst.txt (synth-from-dnssec), https://gitlab.isc.org/isc-projects/bind9/-/merge_requests/11500.
   - **Open:** is 4470 support only online signing, or is there a mechanism that identifies minimally covering NSEC? Does `static-stub` `server-addresses` accept a port? The ARM text mentions IP addresses only.
-- **Unbound:** RFC compliance page lists neither 4470 nor 9824; has aggressive-NSEC docs.
+- **Unbound:** RFC compliance page lists neither 4470 nor 9824; has aggressive-NSEC docs. unbound.conf(5) (checked 2026-10-16): `aggressive-nsec` (default yes) uses "the DNSSEC NSEC chain" (NSEC3 not mentioned); `harden-below-nxdomain` (RFC 8020) default yes; `discard-timeout` default 1900 ms drops UDP replies to slow recursions; `test` is a default local zone.
 - **Knot Resolver:** RFC list lacks both; release notes mention ANC disabled for minimal ranges (4.1.0, 2019).
 - **PowerDNS Recursor:** compliance page lacks RFC 4470 and RFC 9824. Recursor 4.9.0 (2023-06-30): the aggressive cache does "not store NSEC3 entries which cover only a small fraction of possible names", and NSEC3 aggressive caching can be switched off separately (https://blog.powerdns.com/2023/06/30/powerdns-recursor-4-9-0-released). Context: OARC 40 aggressive-NSEC3 talk (https://indico.dns-oarc.net/event/46/contributions/977/).
 - **Minimally covering NSEC3 / "NSEC3 white lies"** (checked 2026-10-14):
@@ -375,11 +375,17 @@ Steps 1 and 2 are done, the golden fixtures are saved, and the delv flags are ve
      - BIND: `zone "." { type hint; }`, `include` of `zones/root/root.anchor`.
      - Knot: hints via the Lua escape hatch (`modules.load('hints > iterate')`, `hints.root`), anchor `zones/root/root.dnskey`, and `policy.PASS` for `test.`, because Knot otherwise answers `.test` itself (RFC 6761; FINDINGS ALL.9).
      - PowerDNS: `recursor.hint_file`; `outgoing.dont_query` is the default list minus 172.16.0.0/12, because the default refuses private addresses and the lab is 172.30/24 (FINDINGS ALL.10); anchor `name: '.'` in the generated `anchors.yml`.
-   - **Lab-only exemptions** (`.test` PASS in Knot, `dont_query` in PowerDNS, the hints and root anchor) are listed in one table in FINDINGS INFRA.8, with whether each is needed in the wild (none is). Keep that table current when adding a resolver (Unbound will need `local-zone: "test." nodefault`).
+   - **Lab-only exemptions** (`.test` PASS in Knot, `dont_query` in PowerDNS, the hints and root anchor) are listed in one table in FINDINGS INFRA.8, with whether each is needed in the wild (none is). Keep that table current when adding a resolver.
    - **Zone files:** `ns1 A` is now 172.30.0.10 (the in-zone NS address must be reachable; serial 3).
    - **Results:** 55/55 checks; full catalogue run `results/20261015T191407Z`. PowerDNS now synthesizes NSEC (N01–N10) and NSEC3 NXDOMAIN/NODATA, not the NSEC3 wildcard; MN-02 is answered via RFC 8020. N11's upstream pattern changed for every resolver (FINDINGS ALL.5). The last forwarding run is `results/20261015T185519Z`.
+2e. **Unbound added (2026-10-16; FINDINGS INFRA.9).** It's an `unbound` service at 172.30.0.23, built by `docker/unbound/Dockerfile` (NLnet Labs has no official image), config `docker/unbound/unbound.conf`.
+   - **Build:** Unbound 1.26.1 from the release tarball. Signature verified with "NLnet Labs releases signing key G2" (`2310 1869 0C4D 903E F419 146A A144 323D EAAC DF45`, per https://nlnetlabs.nl/signing-keys/); the Dockerfile pins the verified SHA-256 `35a6dc0e425a9282c3426d9a3043144011bf0534aed4b73ab62c52aee0af1503` and `alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6`. `unbound -V`: OpenSSL 3.5.9, libevent; no dnstap.
+   - **Config:** lab root hints and `trust-anchor-file` (static) for the root key; `local-zone: "test." nodefault` (ALL.9); query/reply/SERVFAIL/validation logging to stderr; `unbound-control` on localhost without certificates; resolution defaults written out but unchanged.
+   - **Flush:** `unbound-control reload && unbound-control flush_infra all`: reload keeps the infra cache.
+   - **Negative control:** Unbound's SERVFAIL for a dead server never reaches a UDP client (`discard-timeout`, ALL.8), so check 6 now accepts SERVFAIL or no answer for every resolver and prints an OBS line for the latter.
+   - **Results:** 73/73 checks. Unbound synthesizes all NSEC cases, never from NSEC3 (like BIND), synthesizes the minimal-NSEC NODATA (MN-03; the only resolver to do so), sets AD on CD=1, stops at the NXDOMAIN like PowerDNS (RFC 8020), sends `_ta-` queries as type A (RFC 8145 says NULL).
 3. Next options:
    - the MINNSEC.1 discriminating experiment (what makes BIND skip minimal NSEC);
    - the planned knobs P01–P05;
-   - Unbound (build from the signed 1.26.1 tarball), most interesting for NSEC.3/MINNSEC.2/MINNSEC.3;
+   - explain Unbound's MINNSEC.1 result (why it, alone, synthesizes NODATA from a minimal NSEC) and run MINNSEC.2 (`cover_next = "child"`) through all four resolvers;
    - Step 5 (per-query overrides).
