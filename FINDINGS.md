@@ -27,7 +27,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 
 - **Setup (since run 20261015T191407Z):** every resolver reaches the six zones by **ordinary delegation** from a signed local root (172.30.0.11), with that root's key as its only trust anchor (INFRA.8). Earlier runs used a static-stub/forward per zone with per-zone anchors (INFRA.7).
 - **Zones:** six zones, same content, one per variant (docs/VARIANTS.md, docs/zones/).
-- **Latest full run:** `results/20261015T191407Z` (BIND, Knot, PowerDNS via the local root; `--slow`). Last run with forwarding: `results/20261015T185519Z`.
+- **Latest full run:** `results/20261016T153825Z` (BIND, Knot, PowerDNS, Unbound via the local root; `--slow`). Previous: `results/20261015T191407Z` (without Unbound). Last run with forwarding: `results/20261015T185519Z`.
 - **Reproduce:** `docker/pipeline.sh up && docker/pipeline.sh experiments --slow`. Experiment IDs refer to `experiments/CATALOG.md`. Validator and reference checks: `venv/bin/python -m tests.reference`.
 
 ---
@@ -42,7 +42,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Yes: AD on all six zones; NXDOMAIN for NSEC, NSEC3, minimal NSEC, white lies; NOERROR for both compact zones | diag | check 5b; CN-01, C3-01 |
 | Knot | Yes: identical to BIND | diag | check 5b; CN-01, C3-01 |
-| Unbound | Yes: identical to the others (NXDOMAIN ×4, NOERROR ×2 compact, all AD) | diag | check 5b; CN-01, C3-01 (run RUNID) |
+| Unbound | Yes: identical to the others (NXDOMAIN ×4, NOERROR ×2 compact, all AD) | diag | check 5b; CN-01, C3-01 (run 20261016T153825Z) |
 | PowerDNS | Yes: identical to BIND and Knot (NXDOMAIN ×4, NOERROR ×2 compact, all AD) | diag | check 5b; CN-01, C3-01 |
 
 ### ALL.2 Synthesized answers carry the remaining TTL, and synthesis stops at expiry and at the edge of what the cache proves
@@ -53,7 +53,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Remaining TTL (60 → 50); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 |
 | Knot | Remaining TTL (60 → 49–50); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 |
-| Unbound | Remaining TTL (60 → 50); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 (run RUNID) |
+| Unbound | Remaining TTL (60 → 50); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 (run 20261016T153825Z) |
 | PowerDNS | Remaining TTL (60 → 49); upstream after expiry; no cross-gap synthesis | diag | N01, N12, N02 (run 20261015T191407Z) |
 
 - **Note:** Knot clamps every cached TTL to at least 5 s (`cache.ttl-min` default), which matters only for TTL experiments below 5 s.
@@ -65,7 +65,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Irrelevant: validates and caches regardless; a DO=0 client gets SOA only | diag | N09, N10 |
 | Knot | Same as BIND | diag | N09, N10 |
-| Unbound | Same as the others | diag | N09, N10 (run RUNID) |
+| Unbound | Same as the others | diag | N09, N10 (run 20261016T153825Z) |
 | PowerDNS | Same as BIND and Knot | diag | N09, N10 |
 
 - **Interpretation:** DO only shapes what the client is shown.
@@ -78,7 +78,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Synthesizes; answers with **AD=1** | diag (5+ runs) | N08 |
 | Knot | Synthesizes; answers with **AD=0** | diag | N08 |
-| Unbound | Synthesizes; answers with **AD=1** (like BIND and PowerDNS) | diag | N08 (runs 20261016T153512Z, RUNID) |
+| Unbound | Synthesizes; answers with **AD=1** (like BIND and PowerDNS) | diag | N08 (runs 20261016T153512Z, 20261016T153825Z) |
 | PowerDNS | Synthesizes; answers with **AD=1** (like BIND) | diag | N08 |
 
 - **Interpretation:** all four depart from the RFC's implementation note. AD on CD=1 answers is a separate question (RFC 6840 §5.7–5.9) where they disagree.
@@ -92,7 +92,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Forwarding (static-stub): NS for `m<tag>`, DNSKEY, full name (3 upstream). **Delegation:** NS for `m<tag>`, AAAA for its own nameserver name `ns1.nsec.test` (no AAAA glue), DNSKEY, full name (4) | doc (ARM: relaxed mode "falls back to normal (non-minimized) query mode when it receives either NXDOMAIN") | N11 (runs 20261015T185519Z, 20261015T191407Z) |
 | Knot | Forwarding: DNSKEY, NS for `m<tag>`, full name (3). **Delegation:** DNSKEY, then the full name directly (2): no minimisation below the zone cut | diag | N11 (runs 20261015T185519Z, 20261015T191407Z) |
-| Unbound | **Delegation:** `m<tag>` A, DNSKEY, then **stops** (2), the same pattern as PowerDNS: `harden-below-nxdomain` (RFC 8020, default yes) ends resolution at the validated NXDOMAIN | doc (unbound.conf: harden-below-nxdomain "returns NXDOMAIN to queries for a name below another name that is already known to be NXDOMAIN") | N11 (runs 20261016T153512Z, RUNID) |
+| Unbound | **Delegation:** `m<tag>` A, DNSKEY, then **stops** (2), the same pattern as PowerDNS: `harden-below-nxdomain` (RFC 8020, default yes) ends resolution at the validated NXDOMAIN | doc (unbound.conf: harden-below-nxdomain "returns NXDOMAIN to queries for a name below another name that is already known to be NXDOMAIN") | N11 (runs 20261016T153512Z, 20261016T153825Z) |
 | PowerDNS | Forwarding: `m<tag>` **A**, DNSKEY, full name (3). **Delegation:** `m<tag>` A, DNSKEY, then **stops** (2): the validated NXDOMAIN ends resolution (`nothing_below_nxdomain: dnssec`, RFC 8020) | diag | N11 (runs 20261015T185519Z, 20261015T191407Z) |
 
 - **Interpretation:** the fallback ignores the resolver's own validated denial (RFC 8020 cut, RFC 8198).
@@ -177,7 +177,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | All six synthesized, with AD | doc (ARM `synth-from-dnssec`) | N01, N03–N07 |
 | Knot | All six synthesized, with AD | doc (docs: "aggressive caching for DNSSEC-validated data") | N01, N03–N07 |
-| Unbound | All six synthesized, with AD | doc (unbound.conf `aggressive-nsec`, default yes) | N01, N03–N07 (runs 20261016T153512Z, RUNID) |
+| Unbound | All six synthesized, with AD | doc (unbound.conf `aggressive-nsec`, default yes) | N01, N03–N07 (runs 20261016T153512Z, 20261016T153825Z) |
 | PowerDNS | All six synthesized, with AD | doc (`dnssec.aggressive_nsec_cache_size`, RFC 8198) | N01, N03–N07 (run 20261015T191407Z) |
 
 ### NSEC.2 Synthesized names leave no per-name cache entry
@@ -221,11 +221,11 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 | Resolver | Result | Status | Evidence |
 |---|---|---|---|
 | BIND | **Never**: all three upstream | doc (ARM: synthesis "only from NSEC"; NSEC3 "planned for the future") | N3-01/03/06 |
-| Knot | **Yes** for NXDOMAIN and NODATA (N3-01, N3-03: every run). **Wildcard (N3-06) is variable**: synthesized in 3 of 9 runs; in failing runs the second probe first sends a minimisation query `wild.nsec3.test NS`, then the full name | diag | N3-01/03/06; runs 20261015T172911Z, 20261015T185519Z, 20261015T191407Z + 6 repeats |
-| Unbound | **Never**: all three upstream (like BIND) | doc (unbound.conf: aggressive-nsec uses "the DNSSEC NSEC chain"; NSEC3 not mentioned) | N3-01/03/06 (runs 20261016T153512Z, RUNID) |
-| PowerDNS | **Yes** for NXDOMAIN and NODATA (N3-01, N3-03); **no** for the wildcard (N3-06, 1 run) | doc (aggressive NSEC3 with `aggressive_cache_min_nsec3_hit_ratio` 2000; our spans ≈ 1/9) | N3-01/03/06 (run 20261015T191407Z) |
+| Knot | **Yes** for NXDOMAIN and NODATA (N3-01, N3-03: every run). **Wildcard (N3-06) is variable**: synthesized in 4 of 10 runs; in failing runs the second probe first sends a minimisation query `wild.nsec3.test NS`, then the full name | diag | N3-01/03/06; runs 20261015T172911Z, 20261015T185519Z, 20261015T191407Z, 20261016T153825Z + 6 repeats |
+| Unbound | **Never**: all three upstream (like BIND) | doc (unbound.conf: aggressive-nsec uses "the DNSSEC NSEC chain"; NSEC3 not mentioned) | N3-01/03/06 (runs 20261016T153512Z, 20261016T153825Z) |
+| PowerDNS | **Yes** for NXDOMAIN and NODATA (N3-01, N3-03); **no** for the wildcard (N3-06, 2 runs) | doc (aggressive NSEC3 with `aggressive_cache_min_nsec3_hit_ratio` 2000; our spans ≈ 1/9) | N3-01/03/06 (runs 20261015T191407Z, 20261016T153825Z) |
 
-- **Interpretation:** the clearest resolver difference so far: BIND never synthesizes from NSEC3, Knot and PowerDNS do (NXDOMAIN and NODATA). On Knot and PowerDNS the NSEC3 variants are distinguishable by synthesis (vanilla synthesized; white lies and compact not, WL.2 and CDOE.2). On BIND they cannot be. The NSEC3 wildcard case is unreliable (Knot variable, PowerDNS not in one run).
+- **Interpretation:** the clearest resolver difference so far: BIND and Unbound never synthesize from NSEC3, Knot and PowerDNS do (NXDOMAIN and NODATA). On Knot and PowerDNS the NSEC3 variants are distinguishable by synthesis (vanilla synthesized; white lies and compact not, WL.2 and CDOE.2). On BIND and Unbound they cannot be. The NSEC3 wildcard case is unreliable (Knot variable, PowerDNS not in one run).
 - **Follow-up:** an NSEC3 opt-out zone (RFC 8198 §5.2: opt-out spans must not be used for synthesis); NSEC3 TTL expiry; inspect Knot's cached NSEC3; explain Knot's N3-06 variability (hypothesis: whether the closest-encloser proof for the ENT `wild` is cached depends on the minimisation query's outcome; a wildcard answer carries only the next-closer cover, RFC 5155 §7.2.6).
 
 ### NSEC3.2 NSEC3 NXDOMAIN has 2 or 3 records, depending on the name
@@ -254,7 +254,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | **None synthesized**, even where provable (MN-02, MN-03). Cause: `rndc dumpdb -cache` shows minimal NSECs only attached to negative entries, never as standalone records, whereas vanilla NSECs are stored standalone too | diag (3+ runs); **undocumented** (no ISC source found, 2026-10-14) | MN-01/02/03; cache dump |
 | Knot | None synthesized | doc (Knot 4.1.0 release notes: aggressive caching disabled for minimal ranges; not re-verified for 6.x) | MN-01/02/03 |
-| Unbound | **Synthesizes the NODATA (MN-03)**: after `www AAAA`, `www MX` is answered with AD and no upstream query, from the online-signed NSEC at `www` (full bitmap, next `www\000`). The only resolver to use a minimal NSEC this way. MN-02 also answered locally, but `harden-below-nxdomain` (RFC 8020) explains it without NSEC synthesis. MN-01 upstream (never provable) | diag | MN-01/02/03 (runs 20261016T153512Z, RUNID, + repeats) |
+| Unbound | **Synthesizes the NODATA (MN-03)**: after `www AAAA`, `www MX` is answered with AD and no upstream query, from the online-signed NSEC at `www` (full bitmap, next `www\000`). The only resolver to use a minimal NSEC this way. MN-02 also answered locally, but `harden-below-nxdomain` (RFC 8020) explains it without NSEC synthesis. MN-01 upstream (never provable) | diag | MN-01/02/03 (5 of 5 runs: 20261016T153512Z, 20261016T153825Z, 20261016T154509Z/154511Z/154514Z) |
 | PowerDNS | No synthesis from minimal NSEC NODATA (MN-03 upstream). MN-02 (name below a minimal NXDOMAIN) was answered without the responder, most likely by its RFC 8020 rule (`nothing_below_nxdomain: dnssec`), not NSEC synthesis | diag | MN-01/02/03 (run 20261015T191407Z) |
 
 - **Interpretation:** BIND, Knot and PowerDNS keep minimal NSEC out of synthesis (Knot by design, BIND silently, PowerDNS at least for NODATA). Unbound uses the NSEC at an existing name for NODATA synthesis, which RFC 8198 §5.1 allows: the record is valid and its bitmap is complete. So a minimal-NSEC zone gets measurably fewer upstream queries through Unbound only. This bears on CLAUDE.md's open question of whether BIND recognizes minimally covering NSEC.
@@ -305,7 +305,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Upstream (no NSEC3 synthesis at all, NSEC3.1) | doc | WL-01 |
 | Knot | Upstream, **although Knot synthesizes from vanilla NSEC3** (NSEC3.1): each record covers only one hash | diag | WL-01 |
-| Unbound | Upstream (no NSEC3 synthesis at all, NSEC3.1) | doc | WL-01 (run RUNID) |
+| Unbound | Upstream (no NSEC3 synthesis at all, NSEC3.1) | doc | WL-01 (run 20261016T153825Z) |
 | PowerDNS | Upstream, consistent with its documented filter (Recursor ≥ 4.9.0 keeps "NSEC3 entries which cover only a small fraction of possible names" out of its aggressive cache), although with 1-hash spans no resolver could synthesize anyway | diag | WL-01 (run 20261015T191407Z) |
 
 - **Follow-up:** PowerDNS is the resolver documented to detect this case explicitly.
@@ -322,7 +322,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | NOERROR with AD for both zones. With CO from the client: still NOERROR, CO not echoed, no CO upstream | diag (consistent with INFRA.4: compact support is dig-only) | CN-01/02, C3-01 |
 | Knot | Same as BIND | diag (Knot docs don't mention CO or RFC 9824) | CN-01/02, C3-01 |
-| Unbound | Same as the others: NOERROR with AD; with CO, still NOERROR, no CO echoed or sent upstream | diag (unbound.conf doesn't mention CO or RFC 9824) | CN-01/02, C3-01 (run RUNID) |
+| Unbound | Same as the others: NOERROR with AD; with CO, still NOERROR, no CO echoed or sent upstream | diag (unbound.conf doesn't mention CO or RFC 9824) | CN-01/02, C3-01 (run 20261016T153825Z) |
 | PowerDNS | Same as BIND and Knot: NOERROR with AD; with CO, still NOERROR, no CO echoed or sent upstream | diag (no CO/RFC 9824 in its docs) | CN-01/02, C3-01 |
 
 - **Interpretation:** for users of these resolvers, compact denial turns every nonexistent name into NOERROR/NODATA. That matters for software that branches on NXDOMAIN (e.g. the DMARC "np" issue, CLAUDE.md §6).
@@ -335,7 +335,7 @@ Every observation worth revisiting, organized for comparison across resolvers. O
 |---|---|---|---|
 | BIND | Same name from cache; all others upstream | doc (RFC 9824 §6: RFC 8198 and RFC 8020 not supported) | CN-03/04/05, C3-02 |
 | Knot | Same as BIND (including C3-02, although Knot synthesizes from vanilla NSEC3) | diag | CN-03/04/05, C3-02 |
-| Unbound | Same as the others | diag | CN-03/04/05, C3-02 (run RUNID) |
+| Unbound | Same as the others | diag | CN-03/04/05, C3-02 (run 20261016T153825Z) |
 | PowerDNS | Same as BIND and Knot | diag | CN-03/04/05, C3-02 |
 
 ---
